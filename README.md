@@ -1,272 +1,243 @@
+<div align="center">
+
 # Robot Anomaly Detection
 
-Detecting collisions, obstructions and tool faults in industrial robot executions,
-from six force and torque sensors sampled fifteen times per run.
+**A labelling bug made an entire subset look 100% faulty. Finding it was the work.**
 
-An industrial robot cannot tell you it has hit something. Its force and torque sensors
-can, and they react within milliseconds. This project turns 463 recorded executions
-into a classifier that separates a healthy run from a failed one, and asks how much of
-that separation is real once the evaluation is done honestly.
+Detecting collisions, obstructions and tool faults across 463 industrial robot
+executions, from six force and torque sensors sampled fifteen times per run.
 
-![Average sensor signal, normal runs against anomalous runs](docs/normal-vs-anomaly-pattern.png)
+![Python](https://img.shields.io/badge/python-3.12-3776AB?logo=python&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.9-F7931E?logo=scikitlearn&logoColor=white)
+![Lint](https://img.shields.io/badge/lint-ruff-261230?logo=ruff&logoColor=white)
+[![verify](https://github.com/Ilyess911/robot-anomaly-detection/actions/workflows/verify.yml/badge.svg)](https://github.com/Ilyess911/robot-anomaly-detection/actions/workflows/verify.yml)
+![Licence](https://img.shields.io/badge/licence-MIT-2EA043)
 
-The signal is visible before any model touches it. On `Fz`, a normal run holds a flat
-positive load while an anomalous one collapses to negative values. That gap is what the
-models learn, and it is also why the results below need a baseline to be read at all.
+<br />
 
-<br>
+![Average sensor signal, healthy runs against failed runs](docs/normal-vs-anomaly-pattern.png)
 
-## What is in here
+</div>
 
-Five notebooks that walk the full pipeline, from raw sensor traces to evaluated models.
+---
 
-A `src/` package holding the parts worth reusing: a parser for the dataset's unusual
-format, a statistical feature builder, a model trainer with hyperparameter search, and
-plotting helpers.
+## What this is
 
-A `scripts/benchmark.py` that re-runs the model comparison under a stricter protocol
-than the notebooks, because the notebooks have a data leak. It is described below,
-along with what it changed and what it did not.
+A machine learning course project at ESILV, built with Adel Bousri, on the UCI
+Robot Execution Failures dataset. Six sensors, fifteen time steps, one label per
+run: did the arm complete its motion or hit something.
 
-<br>
+It would be a forgettable classification exercise, except that auditing it a
+year later turned up a data bug that had quietly distorted every published
+number. What follows is that audit.
 
-## The dataset
+## The promise (and its limits)
 
-[UCI Robot Execution Failures](https://archive.ics.uci.edu/dataset/138/robot+execution+failures),
-donated by Luis Seabra Lopes and Luis M. Camarinha-Matos.
+| It does | It does not |
+| --- | --- |
+| **Publish a baseline next to every score**, because 0.96 means nothing on its own | Claim the models are good: most of the performance is in the data |
+| **Prove a perfect score is real**, with a shuffled-label control | Run anywhere near a production line |
+| **Reproduce every published figure by one command** | Validate over time: executions are shuffled, not ordered |
 
-Five subsets, one per phase of a robotic assembly task: approach to grasp, transfer,
-positioning, approach to ungrasp, and motion with the part. Every execution is a small
-time series: 6 sensors (`Fx`, `Fy`, `Fz`, `Tx`, `Ty`, `Tz`) by 15 samples, so 90 raw
-values.
+## The bug
 
+LP3 names its healthy class `ok`. Every other subset names it `normal`. The
+binary encoder matched on `normal` alone:
+
+```python
+lambda x: 0 if str(x).lower() == 'normal' else 1
 ```
-463 executions
- 16 original labels, collapsed to normal against anomaly
-334 anomalies, 129 normal runs
-```
 
-That last line is the one that matters. The dataset is 72 percent anomalies, which is
-the opposite of what a production line looks like, and it inflates every score computed
-on the positive class.
+So the 20 healthy executions of LP3 were counted as failures, and one subset out
+of five appeared to fail 100% of the time.
 
-<br>
+| | Before | After |
+| --- | --- | --- |
+| Healthy executions | 109 | **129** |
+| Anomaly share | 76.5% | **72.0%** |
+| LP3 healthy runs | 0 / 47 | **20 / 47** |
+
+Every score in the original notebooks was computed against those wrong labels,
+and 20 contradictory examples were being forced into every model. Fixing them
+did not degrade the results. It improved them, which is how the bug had stayed
+invisible.
 
 ## Results
 
-Statistical features (mean, standard deviation, min, max, range, skewness, kurtosis and
-linear trend, per sensor: 48 features), an 80/20 stratified split, five-fold grid search
-on the training half. Test set: 93 executions, 71 of them anomalous.
+Statistical features per sensor (mean, std, min, max, range, skewness, kurtosis,
+linear trend: 48 in total), an 80/20 stratified split, five-fold grid search on
+the training half. Test set: 93 executions, 67 of them failures.
 
-The first row is not a model. It is a constant answer, and it is the number every other
-row has to beat.
+The first three rows are not models.
 
-| Supervised | F1 anomaly | Accuracy | Precision | Recall | ROC AUC | CV F1 |
-|---|---|---|---|---|---|---|
-| Always answer "anomaly" | 0.866 | 0.763 | 0.763 | 1.000 | | |
-| Logistic Regression | 0.942 | 0.914 | 0.970 | 0.916 | 0.972 | 0.936 ± 0.017 |
-| SVM (RBF) | 0.948 | 0.925 | 1.000 | 0.901 | 0.968 | 0.943 ± 0.020 |
-| Gradient Boosting | 0.957 | 0.936 | 0.985 | 0.930 | 0.979 | 0.938 ± 0.012 |
-| **Random Forest** | **0.964** | **0.946** | **0.985** | **0.944** | **0.980** | **0.941 ± 0.017** |
+| | F1 anomaly | Accuracy | Precision | Recall |
+| --- | --- | --- | --- | --- |
+| Answer "anomaly" every time | 0.838 | 0.720 | 0.720 | 1.000 |
+| **One sensor, one threshold** (`Fx_range`) | **0.924** | 0.893 | 0.939 | 0.910 |
+| A depth-2 tree, so three decisions | 0.971 | 0.957 | 0.957 | 0.985 |
 
-| Unsupervised, trained on 87 normal runs | F1 anomaly | Accuracy | Precision | Recall |
-|---|---|---|---|---|
-| Isolation Forest | 0.951 | 0.925 | 0.944 | 0.958 |
-| One-Class SVM | 0.938 | 0.903 | 0.919 | 0.958 |
+| Tuned models | F1 anomaly | Accuracy | ROC AUC | CV F1 |
+| --- | --- | --- | --- | --- |
+| Logistic Regression | 0.977 | 0.968 | 0.995 | 0.979 ± 0.012 |
+| SVM (RBF) | 0.977 | 0.968 | 0.986 | 0.977 ± 0.013 |
+| Gradient Boosting | 0.993 | 0.989 | 0.992 | 0.994 ± 0.008 |
+| **Random Forest** | **1.000** | 1.000 | 1.000 | 1.000 ± 0.000 |
 
-Random Forest wins, at 0.964 F1 against a 0.866 floor. Stated without the floor, 0.964
-sounds like a solved problem. Stated with it, the models close about three quarters of
-the distance between guessing and perfection, on 93 test samples, which is a respectable
-result and a fragile one.
+| Unsupervised, trained on 103 healthy runs only | F1 anomaly | Accuracy | Precision | Recall |
+| --- | --- | --- | --- | --- |
+| Isolation Forest | 0.957 | 0.936 | 0.930 | 0.985 |
+| One-Class SVM | 0.944 | 0.914 | 0.893 | 1.000 |
 
-The two unsupervised detectors never see an anomaly during training. They are not
-competitive with the supervised models, but they land within two points of them without
-a single failure label, which is the regime an actual factory starts in.
+Read the two tables together and the conclusion is uncomfortable: **one
+threshold on one sensor gets 92% of the way there.** A grid-searched Random
+Forest buys the remaining eight points. The difficulty in this problem was never
+the model.
 
-Reproduce with `python scripts/benchmark.py --output reports/benchmark.json`.
+`make benchmark` reproduces every figure above. CI regenerates them on each push
+and fails if any moves.
 
-<br>
+## A perfect score is an alarm
 
-## The leak, and what it was worth
+Random Forest reaches 1.000 on the test set and 1.000 ± 0.000 across five folds.
+On 463 samples, that is a reason to look for a leak, not to celebrate.
 
-The notebooks standardise before they split:
+The control is to destroy the signal and check the model follows:
+
+| Labels | CV F1 |
+| --- | --- |
+| Real | 0.993 |
+| Shuffled, five draws | **0.760** |
+
+Trained on noise the model lands *below* the constant baseline of 0.838, which
+is what a clean pipeline does: it fits patterns that are not there and pays for
+it. Had it stayed high, something in the features would have been carrying the
+answer. This control is now a test, so it runs on every commit.
+
+## What the scaler leak was worth
+
+The notebooks standardise before they split, so the scaler sees the test set:
 
 ```python
-scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X)                      # sees the whole dataset
+X_scaled = scaler.fit_transform(X)                    # the whole dataset
 X_train, X_test, y_train, y_test = train_test_split(X_scaled, ...)
 ```
 
-The scaler learns the mean and variance of the test set before being evaluated on it.
-This is a textbook leak and it is the first thing anyone should look for in a notebook.
+Textbook leak, and the first thing to look for in anyone's notebook. The
+benchmark runs both protocols in the same environment, same seeds, same grids:
 
-`scripts/benchmark.py` puts the scaler inside a `Pipeline`, so it is refitted on the
-training folds alone at every turn. The interesting part is the size of the correction:
+| | Leaky | Clean | Cost |
+| --- | --- | --- | --- |
+| Logistic Regression | 1.000 | 0.977 | **-0.023** |
+| Random Forest | 1.000 | 1.000 | 0.000 |
+| SVM (RBF) | 0.977 | 0.977 | 0.000 |
+| Gradient Boosting | 0.993 | 0.993 | 0.000 |
 
-| | Notebook | Leak-free | Delta |
-|---|---|---|---|
-| Random Forest, accuracy | 0.946 | 0.946 | 0.000 |
-| Logistic Regression, accuracy | 0.925 | 0.914 | -0.011 |
-| Logistic Regression, ROC AUC | 0.977 | 0.972 | -0.005 |
+Zero on the tree models, which are invariant to scaling and could never have
+been affected. On logistic regression the leak buys a fake perfect score.
 
-Close to nothing, and for a reason worth stating: Random Forest and Gradient Boosting
-are invariant to feature scaling, so the leak could never have reached them. Only the
-two distance-based models could move, and on 463 samples the difference between a scaler
-fitted on 463 rows and one fitted on 370 is small.
-
-So the leak was real, and immaterial here. Both halves of that sentence matter. Finding
-it is not impressive if you cannot say what it cost, and "the numbers were inflated"
-would have been a more dramatic claim than the evidence supports.
-
-Two other things the benchmark fixes, which mattered more:
-
-**The F1 changed meaning between notebooks.** Notebook 03 prints a weighted average,
-notebook 05 prints the positive class, and notebook 04 prints both for the same model
-in the same cell. The apparent superiority of the unsupervised methods, 0.972 against
-0.947, was two different metrics next to each other.
-
-**The two families were scored on different test sets**, 93 samples for supervised and
-376 for unsupervised. The unsupervised set was larger and even more anomaly-heavy, which
-lifted its F1 for free. They now share one test set, and the ranking reverses.
-
-<br>
+**An earlier version of this README got that number wrong.** It reported -0.011
+by comparing notebook outputs from Python 3.9 against a script run on Python
+3.14 with a five-year-newer scikit-learn. Two variables, one conclusion. The
+measurement is only meaningful inside one environment, which is why
+`requirements-lock.txt` pins it.
 
 ## Decisions
 
-**Statistical features rather than raw samples.** 90 raw values per execution, on 463
-executions, is a shape that invites overfitting and resists interpretation. Eight
-statistics per sensor cut the space to 48 dimensions and, more importantly, produce
-features a maintenance engineer can argue with: `Tz_std` is the variability of the yaw
-torque, not "feature 74".
+**Statistical features instead of raw samples.** 90 raw values on 463 runs
+invites overfitting and resists interpretation. Eight statistics per sensor cut
+the space to 48 dimensions and produce names a maintenance engineer can argue
+with: `Tz_std` is the variability of yaw torque, not "feature 74".
 
-**All five subsets merged.** LP1 to LP5 are different phases of the same task, with
-between 47 and 164 executions each. Kept apart, three of the five are too small to split
-meaningfully. Merged, the model learns a notion of anomaly that spans phases. The cost
-is stated in the limits: a per-phase model would very likely do better on its own phase.
+**All five subsets merged.** LP1 to LP5 are phases of one assembly task, holding
+between 47 and 164 runs. Kept apart, three of the five are too small to split
+meaningfully. The cost is stated in the limits.
 
-**Binary target.** The 16 original labels include classes with 3 and 5 members. Training
-a 16-class model on 463 samples would produce confident nonsense on the rare ones. The
-useful question on a line is also binary: stop the arm, or do not.
+**Binary target.** The 16 original labels include classes with 3 and 5 members.
+A 16-class model on 463 samples would produce confident nonsense on the rare
+ones, and the useful question on a line is binary anyway: stop the arm or not.
 
-**Unsupervised models trained on normal runs only.** This mirrors the real deployment
-order. A new cell has months of healthy operation and no catalogue of the failures it
-has not had yet.
-
-<br>
+**Unsupervised models see only healthy runs.** That mirrors deployment order. A
+new cell has months of healthy operation and no catalogue of failures it has not
+had yet.
 
 ## Limits
 
-The honest reading of this project, in the order a reviewer would raise them.
+**The test set is 93 executions.** One reclassified sample moves accuracy by a
+full point. The cross-validated figures are more trustworthy than the single
+split, and both are reported.
 
-**The test set is 93 executions.** One reclassified sample moves accuracy by a full
-point. Every number above should be read with that grain of salt, and the cross-validated
-scores (0.941 ± 0.017 for Random Forest) are more trustworthy than the single test split.
+**The class balance is inverted relative to reality.** 72% failures here; a real
+line sees the opposite, and precision on the rare class is exactly what would
+degrade. This project does not measure the thing that would matter most.
 
-**The class balance is inverted relative to reality.** 72 percent anomalies. A real line
-sees the opposite, and precision on the rare class is exactly what would degrade. This
-project does not measure the thing that would matter most in production.
+**There is no temporal validation.** Executions are shuffled at random. A real
+deployment trains on the past and tests on the future, including sensor drift
+and recalibration, none of which this dataset exposes.
 
-**There is no temporal validation.** Executions are shuffled at random. A deployment
-would need to train on the past and test on the future, including sensor drift and
-recalibration, none of which this dataset exposes.
+**One robot, one task, one recording session.** Nothing here demonstrates
+transfer to another arm or another cell.
 
-**The dataset is old and single-source.** One robot, one assembly task, recorded in a
-research context. Nothing here demonstrates transfer to another arm or another cell.
+**Nothing is deployed.** No inference service, no latency measurement, no
+monitoring. The models are pickles on disk.
 
-**Nothing is deployed.** There is no inference service, no latency measurement, no
-monitoring. The models are pickles on disk, and the code that produced them is the only
-thing that has been run.
+**The notebooks still show the old numbers.** They ran before the labelling fix
+and have not been re-executed, on purpose: rewriting them would erase the record
+of what was wrong. Where they disagree with this page, this page is right.
 
-**The notebooks keep their original numbers.** They were not re-executed after the
-benchmark was written, so a reader who compares them cell by cell will find the small
-discrepancies documented above rather than a silent rewrite of history.
+## What I take from it
 
-<br>
+That the labels deserve more suspicion than the model. Four classifiers within
+two points of each other told me nothing; twenty rows named `ok` instead of
+`normal` changed every table on this page.
 
-## What this project taught me
+That a baseline is not a formality. The distance between 0.838 and 1.000 is the
+whole contribution, and publishing the second number without the first is the
+most common way to be technically truthful and practically misleading.
 
-That evaluation protocol is the whole game on a small dataset. The four supervised
-models are within two points of each other, which is inside the noise of a 93-sample
-test set. Choosing between them on that basis would be superstition, and Random Forest
-is preferred here for its stability across folds and its readable feature importances,
-not for winning by 0.007.
-
-That a baseline is not a formality. The gap between 0.866 and 0.964 is the entire
-contribution, and it is much less impressive than 0.964 alone. Publishing the second
-number without the first is the most common way to be technically truthful and
-practically misleading.
-
-That torque carries more information than force here, which the models found and the
-first figure shows: `Tx` and `Ty` separate the two populations more cleanly than `Fx`
-and `Fy` do. Physical interpretation is not decoration on top of a model, it is how you
-tell a real pattern from a fitted artefact.
-
-<br>
-
-## Roadmap
-
-Nothing here is committed work. It is what a next pass would address, in order of value.
-
-- Per-phase models, one per LP subset, compared against the merged model
-- Nested cross-validation, so hyperparameter search stops borrowing from the test set
-- Precision-recall curves in place of ROC, which flatters imbalanced problems
-- A small inference entry point taking a raw execution and returning a decision
-- Re-execution of the notebooks under the leak-free protocol, so the two agree
-
-<br>
+That a perfect score obliges you to prove it. The shuffled-label control took
+ten minutes to write and is the only reason the 1.000 in the table above is
+allowed to stay there.
 
 ## Running it
-
-Requires Python 3.9 or later.
 
 ```bash
 git clone https://github.com/Ilyess911/robot-anomaly-detection.git
 cd robot-anomaly-detection
-./start.sh
+make setup       # venv + the exact versions behind the published numbers
+make verify      # lint, tests, benchmark
+make notebooks   # opens notebooks/, run 01 to 05 in order
 ```
-
-`start.sh` creates the virtual environment, installs the dependencies, registers a
-Jupyter kernel named `Python (robot-anomaly)` and opens the notebooks. Run them in order,
-01 through 05.
-
-To reproduce the benchmark table without opening a notebook:
-
-```bash
-python -m venv .venv
-./.venv/bin/pip install -r requirements.txt
-./.venv/bin/python scripts/benchmark.py
-```
-
-It takes a few minutes, most of it in the SVM grid search.
-
-<br>
 
 ## Structure
 
 ```
 notebooks/     01 exploration, 02 preprocessing, 03 supervised,
                04 unsupervised, 05 evaluation
-src/           utils.py    dataset parsing, features, plots, metrics
-               models.py   trainers with grid search, save and load
-scripts/       benchmark.py        leak-free model comparison
+src/           utils.py    parsing, labels, features, plots, metrics
+               models.py   trainers with grid search (superseded by the benchmark)
+scripts/       benchmark.py        the comparison behind every published figure
                scrub_notebooks.py  strips machine paths and warning noise
+tests/         test_dataset.py     the dataset is what the README claims
+               test_protocol.py    the protocol, the baseline, the leak control
 data/          lp1 to lp5, the UCI subsets, unmodified
 models/        trained estimators, one pickle per model
-reports/       benchmark.json, regenerated by the script
-docs/          figures used by this README
+reports/       benchmark.json, regenerated by CI and compared to this file
+docs/          figures used by this page
 ```
-
-<br>
 
 ## Credits
 
-Built with Adel Bousri as a machine learning course project at ESILV. The pipeline, the
-modules and the notebooks are joint work. The audit, the benchmark and this README are
-later additions by Ilyess Assadi.
+Built with Adel Bousri as a machine learning course project at ESILV. The
+pipeline, the modules and the notebooks are joint work. The audit, the
+benchmark, the tests and this page are later additions by Ilyess Assadi.
 
 The dataset belongs to its authors and is redistributed here unmodified for
-reproducibility. Please cite the UCI entry rather than this repository if you use it.
+reproducibility. Please cite the
+[UCI entry](https://archive.ics.uci.edu/dataset/138/robot+execution+failures),
+donated by Luis Seabra Lopes and Luis M. Camarinha-Matos, rather than this
+repository.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT for the code. See [LICENSE](LICENSE); the dataset is excluded and keeps its
+own terms.
