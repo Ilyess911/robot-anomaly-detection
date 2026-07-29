@@ -25,11 +25,18 @@ from sklearn.metrics import (
 from sklearn.preprocessing import LabelEncoder
 from sklearn.decomposition import PCA
 from typing import Tuple, List, Optional, Dict
+from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
 
 
-def load_robot_data(data_dir: str = "data") -> pd.DataFrame:
+#: Répertoire des données du dépôt, résolu depuis l'emplacement de ce module.
+#: Un chemin relatif dépendrait du dossier courant, qui n'est pas le même selon
+#: qu'on lance un notebook, un script ou une session interactive.
+DATA_DIR = str(Path(__file__).resolve().parent.parent / "data")
+
+
+def load_robot_data(data_dir: str = DATA_DIR) -> pd.DataFrame:
     """
     Load and merge all .data files from the UCI Robot Execution Failures dataset.
     
@@ -45,7 +52,9 @@ def load_robot_data(data_dir: str = "data") -> pd.DataFrame:
     Reference: Lesson 1 - Data Collection and Integration
     
     Args:
-        data_dir (str): Path to directory containing .data files. Default is "data".
+        data_dir (str): Path to directory containing .data files. Defaults to the
+            repository's own ``data/`` directory, resolved from this module's location
+            so that the call works from a notebook, a script or a REPL alike.
         
     Returns:
         pd.DataFrame: Merged DataFrame with:
