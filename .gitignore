@@ -18,6 +18,8 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Sorties de benchmark régénérables
-reports/*.json
-!reports/.gitkeep
+# reports/benchmark.json est versionné exprès : le README cite ses chiffres, et
+# une affirmation vérifiable doit être livrée avec la preuve qui la soutient.
+# Les rapports produits sous un autre nom, eux, sont des essais locaux.
+reports/*
+!reports/benchmark.json
