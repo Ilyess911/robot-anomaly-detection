@@ -3,39 +3,38 @@ Industrial Robot Anomaly Detection Project
 Modules utilitaires pour le projet de détection d'anomalies dans les robots industriels.
 """
 
-from .utils import (
-    load_robot_data,
-    encode_labels,
-    plot_class_distribution,
-    plot_correlations,
-    plot_time_series,
-    create_statistical_features,
-    plot_pca,
-    evaluate_model,
-    plot_feature_importances
-)
-
 from .models import (
     SupervisedModels,
-    train_supervised_model,
+    compare_models,
     train_isolation_forest,
     train_one_class_svm,
-    compare_models
+    train_supervised_model,
+)
+from .utils import (
+    create_statistical_features,
+    encode_labels,
+    evaluate_model,
+    load_robot_data,
+    plot_class_distribution,
+    plot_correlations,
+    plot_feature_importances,
+    plot_pca,
+    plot_time_series,
 )
 
 __all__ = [
-    'load_robot_data',
-    'encode_labels',
-    'plot_class_distribution',
-    'plot_correlations',
-    'plot_time_series',
-    'create_statistical_features',
-    'plot_pca',
-    'evaluate_model',
-    'plot_feature_importances',
-    'SupervisedModels',
-    'train_supervised_model',
-    'train_isolation_forest',
-    'train_one_class_svm',
-    'compare_models'
+    "SupervisedModels",
+    "compare_models",
+    "create_statistical_features",
+    "encode_labels",
+    "evaluate_model",
+    "load_robot_data",
+    "plot_class_distribution",
+    "plot_correlations",
+    "plot_feature_importances",
+    "plot_pca",
+    "plot_time_series",
+    "train_isolation_forest",
+    "train_one_class_svm",
+    "train_supervised_model",
 ]
