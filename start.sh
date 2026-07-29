@@ -1,35 +1,37 @@
-#!/bin/bash
+#!/usr/bin/env bash
+#
+# Prépare l'environnement et ouvre les notebooks.
+#
+#   ./start.sh
+#
+# Le script s'arrête à la première erreur plutôt que de continuer sur un
+# environnement à moitié installé, ce qui produirait un échec plus loin et
+# plus difficile à lire.
 
-# Script de démarrage pour le projet Robot Anomaly Detection
+set -euo pipefail
 
-echo "🚀 Démarrage du projet Robot Anomaly Detection"
-echo ""
+cd "$(dirname "$0")"
 
-# Activer l'environnement virtuel
-if [ ! -d ".venv" ]; then
-    echo "❌ Environnement virtuel non trouvé. Création..."
-    python3 -m venv .venv
-    source .venv/bin/activate
-    pip install --upgrade pip
-    pip install -r requirements.txt
-    python -m ipykernel install --user --name=robot-anomaly --display-name="Python (robot-anomaly)"
+if [ ! -d .venv ]; then
+  echo "Création de l'environnement virtuel"
+  python3 -m venv .venv
+  ./.venv/bin/pip install --quiet --upgrade pip
+  ./.venv/bin/pip install --quiet -r requirements.txt
+  ./.venv/bin/python -m ipykernel install --user \
+    --name robot-anomaly --display-name "Python (robot-anomaly)"
 else
-    echo "✅ Activation de l'environnement virtuel..."
-    source .venv/bin/activate
+  echo "Environnement virtuel déjà présent"
 fi
 
-# Vérifier que les dépendances sont installées
-echo ""
-echo "📦 Vérification des dépendances..."
-python3 -c "import numpy, pandas, matplotlib, sklearn, jupyter; print('✅ Toutes les dépendances sont installées')" 2>/dev/null || {
-    echo "⚠️  Installation des dépendances manquantes..."
-    pip install -r requirements.txt
+echo "Vérification des dépendances"
+./.venv/bin/python -c "import numpy, pandas, scipy, sklearn, matplotlib, seaborn" || {
+  echo "Dépendances manquantes, réinstallation"
+  ./.venv/bin/pip install --quiet -r requirements.txt
 }
 
-# Lancer Jupyter Notebook
-echo ""
-echo "📓 Lancement de Jupyter Notebook..."
-echo "   Les notebooks sont disponibles dans le dossier 'notebooks/'"
-echo "   Kernel disponible: Python (robot-anomaly)"
-echo ""
-jupyter notebook
+echo
+echo "Notebooks dans notebooks/, à exécuter dans l'ordre 01 à 05."
+echo "Kernel à sélectionner : Python (robot-anomaly)"
+echo
+
+exec ./.venv/bin/jupyter notebook notebooks/
