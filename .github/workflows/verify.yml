@@ -1,0 +1,71 @@
+name: verify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, tests, benchmark
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+
+      # Les versions exactes qui ont produit reports/benchmark.json. Installer
+      # des bornes basses ferait dériver les chiffres sans prévenir, et le
+      # dernier pas de ce workflow les compare au fichier versionné.
+      - name: Install
+        run: pip install -r requirements-lock.txt
+
+      - name: Lint
+        run: |
+          ruff check src scripts tests
+          ruff format --check src scripts tests
+
+      - name: Tests
+        run: pytest tests/
+
+      # Le benchmark est rejoué, puis confronté au rapport versionné. Si un
+      # changement de code déplace un chiffre publié dans le README, la CI
+      # échoue ici plutôt que de laisser la documentation mentir en silence.
+      - name: Benchmark reproduit les chiffres publiés
+        run: |
+          cp reports/benchmark.json /tmp/published.json
+          python scripts/benchmark.py --output reports/benchmark.json
+          python - <<'PY'
+          import json, sys
+
+          published = json.load(open("/tmp/published.json"))
+          fresh = json.load(open("reports/benchmark.json"))
+
+          drift = []
+          for section in ("baselines", "supervised", "supervised_leaky", "unsupervised"):
+              for model, metrics in published.get(section, {}).items():
+                  for metric, value in metrics.items():
+                      if not isinstance(value, (int, float)):
+                          continue
+                      now = fresh.get(section, {}).get(model, {}).get(metric)
+                      if now is None or abs(now - value) > 1e-6:
+                          drift.append(f"{section}.{model}.{metric}: {value} -> {now}")
+
+          if drift:
+              print("Les chiffres publiés ont bougé :")
+              print("\n".join("  " + line for line in drift))
+              sys.exit(1)
+          print("Tous les chiffres publiés sont reproduits à l'identique.")
+          PY
