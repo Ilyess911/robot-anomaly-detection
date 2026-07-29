@@ -43,3 +43,9 @@ ignore = [
 testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
+# La racine du dépôt doit être sur sys.path pour que `src` et `scripts` soient
+# importables. Sans cette ligne, la collecte réussit sur une machine où la
+# racine s'y trouve déjà pour une autre raison, et échoue en CI sur
+# ModuleNotFoundError. C'est précisément le genre de « ça marche chez moi »
+# qu'une intégration continue existe pour attraper.
+pythonpath = ["."]
