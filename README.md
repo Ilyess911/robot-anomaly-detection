@@ -58,29 +58,30 @@ Statistical features (mean, standard deviation, min, max, range, skewness, kurto
 linear trend, per sensor: 48 features), an 80/20 stratified split, five-fold grid search
 on the training half. Test set: 93 executions, 71 of them anomalous.
 
-The first row is not a model. It is a constant answer.
+The first row is not a model. It is a constant answer, and it is the number every other
+row has to beat.
 
-| | F1 anomaly | Accuracy | Precision | Recall | ROC AUC |
-|---|---|---|---|---|---|
-| Always answer "anomaly" | 0.866 | 0.763 | 0.763 | 1.000 | |
-| | | | | | |
-| Logistic Regression | 0.942 | 0.914 | 0.970 | 0.916 | 0.972 |
-| SVM (RBF) | 0.948 | 0.925 | 1.000 | 0.901 | 0.968 |
-| Gradient Boosting | 0.957 | 0.936 | 0.985 | 0.930 | 0.979 |
-| **Random Forest** | **0.964** | **0.946** | **0.985** | **0.944** | **0.980** |
-| | | | | | |
-| Isolation Forest | 0.951 | 0.925 | 0.944 | 0.958 | |
-| One-Class SVM | 0.938 | 0.903 | 0.919 | 0.958 | |
+| Supervised | F1 anomaly | Accuracy | Precision | Recall | ROC AUC | CV F1 |
+|---|---|---|---|---|---|---|
+| Always answer "anomaly" | 0.866 | 0.763 | 0.763 | 1.000 | | |
+| Logistic Regression | 0.942 | 0.914 | 0.970 | 0.916 | 0.972 | 0.936 ± 0.017 |
+| SVM (RBF) | 0.948 | 0.925 | 1.000 | 0.901 | 0.968 | 0.943 ± 0.020 |
+| Gradient Boosting | 0.957 | 0.936 | 0.985 | 0.930 | 0.979 | 0.938 ± 0.012 |
+| **Random Forest** | **0.964** | **0.946** | **0.985** | **0.944** | **0.980** | **0.941 ± 0.017** |
+
+| Unsupervised, trained on 87 normal runs | F1 anomaly | Accuracy | Precision | Recall |
+|---|---|---|---|---|
+| Isolation Forest | 0.951 | 0.925 | 0.944 | 0.958 |
+| One-Class SVM | 0.938 | 0.903 | 0.919 | 0.958 |
 
 Random Forest wins, at 0.964 F1 against a 0.866 floor. Stated without the floor, 0.964
 sounds like a solved problem. Stated with it, the models close about three quarters of
 the distance between guessing and perfection, on 93 test samples, which is a respectable
 result and a fragile one.
 
-The two unsupervised detectors only ever see normal executions during training, 87 of
-them. They are not competitive with the supervised models, but they are within five
-points of them without a single anomaly label, which is the regime an actual factory
-starts in.
+The two unsupervised detectors never see an anomaly during training. They are not
+competitive with the supervised models, but they land within two points of them without
+a single failure label, which is the regime an actual factory starts in.
 
 Reproduce with `python scripts/benchmark.py --output reports/benchmark.json`.
 
