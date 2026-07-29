@@ -1,0 +1,23 @@
+# Versions exactes ayant produit reports/benchmark.json.
+#
+# requirements.txt donne les bornes basses, utiles pour ouvrir les notebooks
+# avec ce qu'on a sous la main. Ce fichier-ci sert à reproduire les chiffres
+# publiés dans le README au chiffre près.
+#
+# La distinction n'est pas cosmétique. Les notebooks ont été exécutés en 2025
+# sous Python 3.9 et une version de scikit-learn antérieure ; comparer leurs
+# métriques à celles d'un script lancé aujourd'hui mélange deux variables. Le
+# benchmark fixe donc son environnement, et mesure ses écarts à l'intérieur.
+#
+#     pip install -r requirements-lock.txt
+
+matplotlib==3.11.1
+numpy==2.5.1
+pandas==3.0.5
+scikit-learn==1.9.0
+scipy==1.18.0
+seaborn==0.13.2
+
+# Outillage
+pytest==9.1.1
+ruff==0.16.0
