@@ -69,7 +69,7 @@ PRETTY = {
     "random_forest": "Random Forest",
     "svm_rbf": "SVM (RBF)",
     "gradient_boosting": "Gradient Boosting",
-    "always_anomaly": 'Always answer "anomaly"',
+    "always_anomaly": 'Always answer "failure"',
     "best_single_feature": "One sensor, one threshold",
     "depth_2_tree": "Depth-2 tree",
 }
@@ -283,14 +283,14 @@ def figure_comparison(benchmark: dict, experiments: dict, out: Path) -> None:
     values = [row[1] for row in rows][::-1]
     colors = [row[2] for row in rows][::-1]
 
-    figure, axis = plt.subplots(figsize=(8.8, 5.2))
+    figure, axis = plt.subplots(figsize=(8.8, 5.6))
     axis.barh(np.arange(len(values)), values, color=colors, height=0.66)
     for index, value in enumerate(values):
         axis.text(value + 0.006, index, f"{value:.3f}", va="center", fontsize=9)
     axis.set_yticks(np.arange(len(labels)))
     axis.set_yticklabels(labels, fontsize=9)
     axis.set_xlim(0, 1.09)
-    axis.set_xlabel("F1 on the anomaly class, grouped held-out set of 93 executions")
+    axis.set_xlabel("F1 on the failure class, grouped held-out set of 93 executions")
     axis.set_title("Baselines, one-class detectors, supervised classifiers")
     axis.grid(axis="y", visible=False)
     handles = [
@@ -298,7 +298,15 @@ def figure_comparison(benchmark: dict, experiments: dict, out: Path) -> None:
         Patch(color=ACCENT, label="one-class, healthy runs only"),
         Patch(color=HEALTHY, label="supervised, labelled failures"),
     ]
-    axis.legend(handles=handles, loc="lower right")
+    # Below the axis: every horizontal bar reaches past 0.65, so any in-axes
+    # legend sits on top of data.
+    axis.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.13),
+        ncol=3,
+        fontsize=9,
+    )
     figure.savefig(out / "model-comparison.png")
     plt.close(figure)
 
@@ -329,7 +337,7 @@ def figure_threshold(experiments: dict, out: Path) -> None:
             label=PRETTY[name],
         )
     axis.set_xlabel("threshold, as a percentile of the healthy training scores")
-    axis.set_ylabel("F1, anomaly class")
+    axis.set_ylabel("F1, failure class")
     axis.set_title("Every detector ranks perfectly. Only the threshold separates them")
     axis.legend(loc="lower left", ncol=2)
     figure.savefig(out / "threshold-sensitivity.png")
