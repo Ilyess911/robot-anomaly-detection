@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   verify:
-    name: Lint, tests, benchmark
+    name: Lint, tests, reproduced numbers
     runs-on: ubuntu-latest
 
     steps:
@@ -26,46 +26,75 @@ jobs:
           python-version-file: .python-version
           cache: pip
 
-      # Les versions exactes qui ont produit reports/benchmark.json. Installer
-      # des bornes basses ferait dériver les chiffres sans prévenir, et le
-      # dernier pas de ce workflow les compare au fichier versionné.
+      # The exact versions that produced reports/. Installing lower bounds would
+      # let the numbers drift without warning, and the last step of this workflow
+      # compares them against the committed reports.
       - name: Install
         run: pip install -r requirements-lock.txt
 
       - name: Lint
         run: |
-          ruff check src scripts tests
-          ruff format --check src scripts tests
+          ruff check src scripts tests app
+          ruff format --check src scripts tests app
 
       - name: Tests
         run: pytest tests/
 
-      # Le benchmark est rejoué, puis confronté au rapport versionné. Si un
-      # changement de code déplace un chiffre publié dans le README, la CI
-      # échoue ici plutôt que de laisser la documentation mentir en silence.
-      - name: Benchmark reproduit les chiffres publiés
+      # Both reports are replayed and confronted with the committed ones. If a
+      # code change moves a number the README publishes, CI fails here rather
+      # than letting the documentation lie in silence.
+      - name: Published numbers are reproduced exactly
         run: |
-          cp reports/benchmark.json /tmp/published.json
+          cp reports/benchmark.json /tmp/published-benchmark.json
+          cp reports/experiments.json /tmp/published-experiments.json
           python scripts/benchmark.py --output reports/benchmark.json
+          python scripts/experiments.py --output reports/experiments.json
           python - <<'PY'
           import json, sys
 
-          published = json.load(open("/tmp/published.json"))
-          fresh = json.load(open("reports/benchmark.json"))
+          CHECKED = {
+              "benchmark": (
+                  "/tmp/published-benchmark.json",
+                  "reports/benchmark.json",
+                  ("baselines", "baselines_random", "supervised", "supervised_random",
+                   "supervised_leaky", "duplicates", "splits"),
+              ),
+              "experiments": (
+                  "/tmp/published-experiments.json",
+                  "reports/experiments.json",
+                  ("one_class", "one_class_random_split", "duplicates", "splits"),
+              ),
+          }
+
+          def numbers(node, trail=""):
+              if isinstance(node, dict):
+                  for key, value in node.items():
+                      yield from numbers(value, f"{trail}.{key}" if trail else key)
+              elif isinstance(node, (int, float)) and not isinstance(node, bool):
+                  yield trail, node
 
           drift = []
-          for section in ("baselines", "supervised", "supervised_leaky", "unsupervised"):
-              for model, metrics in published.get(section, {}).items():
-                  for metric, value in metrics.items():
-                      if not isinstance(value, (int, float)):
-                          continue
-                      now = fresh.get(section, {}).get(model, {}).get(metric)
+          for name, (before, after, sections) in CHECKED.items():
+              published = json.load(open(before))
+              fresh = json.load(open(after))
+              for section in sections:
+                  reference = dict(numbers(published.get(section, {})))
+                  current = dict(numbers(fresh.get(section, {})))
+                  for path, value in reference.items():
+                      now = current.get(path)
                       if now is None or abs(now - value) > 1e-6:
-                          drift.append(f"{section}.{model}.{metric}: {value} -> {now}")
+                          drift.append(f"{name}.{section}.{path}: {value} -> {now}")
 
           if drift:
-              print("Les chiffres publiés ont bougé :")
+              print("Published numbers have moved:")
               print("\n".join("  " + line for line in drift))
               sys.exit(1)
-          print("Tous les chiffres publiés sont reproduits à l'identique.")
+          print("Every published number is reproduced identically.")
           PY
+
+      # A figure that contradicts the reports is the failure this project
+      # already had once, when plots committed before a labelling fix kept
+      # showing the old story. Redrawing them in CI proves the script still runs
+      # against the current reports.
+      - name: Figures redraw from the reports
+        run: python scripts/figures.py --reports reports --output /tmp/assets

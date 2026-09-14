@@ -1,6 +1,6 @@
-# Dépendances réellement importées par src/ et notebooks/.
-# xgboost, plotly et ipywidgets figuraient ici sans être utilisés nulle part :
-# le « Gradient Boosting » du projet est celui de scikit-learn.
+# Dependencies actually imported by src/, scripts/ and notebooks/.
+# xgboost, plotly and ipywidgets used to be listed here without being imported
+# anywhere: the project's gradient boosting is scikit-learn's.
 
 numpy>=1.21.0
 pandas>=1.3.0

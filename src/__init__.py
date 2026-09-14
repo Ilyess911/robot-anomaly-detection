@@ -1,40 +1,38 @@
-"""
-Industrial Robot Anomaly Detection Project
-Modules utilitaires pour le projet de détection d'anomalies dans les robots industriels.
+"""An anomaly detection framework for robotic and industrial sensor data.
+
+Layout:
+
+===================  ====================================================
+``src.data``         parsing and labelling of the raw executions
+``src.features``     statistical descriptors per sensor
+``src.models``       supervised classifiers and one-class detectors
+``src.evaluation``   metrics, threshold analysis, leak controls
+``src.visualization``figures for the notebooks and for the report
+``src.config``       protocol parameters, seeding, logging
+===================  ====================================================
 """
 
-from .models import (
-    SupervisedModels,
-    compare_models,
-    train_isolation_forest,
-    train_one_class_svm,
-    train_supervised_model,
-)
-from .utils import (
-    create_statistical_features,
-    encode_labels,
-    evaluate_model,
-    load_robot_data,
-    plot_class_distribution,
-    plot_correlations,
-    plot_feature_importances,
-    plot_pca,
-    plot_time_series,
-)
+from .config import Config, load_config, set_seed, setup_logging
+from .data import as_time_series, encode_labels, load_robot_data
+from .evaluation import confusion, score, shuffled_label_control, threshold_curve
+from .features import create_statistical_features, feature_matrix, feature_names
+from .models import build_detectors, build_grids
 
 __all__ = [
-    "SupervisedModels",
-    "compare_models",
+    "Config",
+    "as_time_series",
+    "build_detectors",
+    "build_grids",
+    "confusion",
     "create_statistical_features",
     "encode_labels",
-    "evaluate_model",
+    "feature_matrix",
+    "feature_names",
+    "load_config",
     "load_robot_data",
-    "plot_class_distribution",
-    "plot_correlations",
-    "plot_feature_importances",
-    "plot_pca",
-    "plot_time_series",
-    "train_isolation_forest",
-    "train_one_class_svm",
-    "train_supervised_model",
+    "score",
+    "set_seed",
+    "setup_logging",
+    "shuffled_label_control",
+    "threshold_curve",
 ]

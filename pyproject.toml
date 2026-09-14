@@ -1,51 +1,56 @@
 [project]
 name = "robot-anomaly-detection"
-version = "1.1.0"
-description = "Anomaly detection on industrial robot executions from force and torque sensors."
+version = "2.0.0"
+description = "An anomaly detection framework for robotic and industrial systems, evaluated on multivariate force and torque data."
 requires-python = ">=3.12"
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "scripts", "tests"]
+src = ["src", "scripts", "tests", "app"]
 
 [tool.ruff.lint]
-# Le sous-ensemble utile sur un projet de ce genre. Pas de règle de style pure :
-# une règle qu'on désactive au premier désaccord n'a jamais servi à rien.
+# The useful subset for a project of this kind. No pure style rule: a rule
+# switched off at the first disagreement was never worth having.
 select = [
-  "E",      # erreurs pycodestyle
-  "F",      # pyflakes : imports morts, variables inutilisées, f-strings vides
-  "I",      # ordre des imports
-  "UP",     # syntaxe moderne
-  "B",      # pièges courants (bugbear)
-  "RUF",    # règles propres à ruff
-  "FURB",   # tournures obsolètes
+  "E",      # pycodestyle errors
+  "F",      # pyflakes: dead imports, unused variables, empty f-strings
+  "I",      # import order
+  "UP",     # modern syntax
+  "B",      # common traps (bugbear)
+  "RUF",    # ruff's own rules
+  "FURB",   # outdated constructs
 ]
 
 ignore = [
-  # Ces trois règles signalent les guillemets typographiques et les caractères
-  # accentués comme « ambigus ». Une partie de la documentation de ce dépôt est
-  # en français : les corriger reviendrait à écrire du mauvais français pour
-  # satisfaire un détecteur d'homoglyphes.
+  # These three flag typographic quotes and accented characters as ambiguous.
+  # Some documentation and commit prose here is in French, and satisfying a
+  # homoglyph detector would mean writing bad French.
   "RUF001",
   "RUF002",
   "RUF003",
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Le package réexporte volontairement : ces imports servent d'API publique.
+# The package re-exports on purpose: these imports are the public API.
 "src/__init__.py" = ["F401"]
-# Les tests importent à l'intérieur des fonctions pour garder le coût des
-# imports lourds dans le seul test qui en a besoin.
+"src/utils.py" = ["F401"]
+"src/data/__init__.py" = ["F401"]
+"src/features/__init__.py" = ["F401"]
+"src/models/__init__.py" = ["F401"]
+"src/evaluation/__init__.py" = ["F401"]
+"src/visualization/__init__.py" = ["F401"]
+# The tests import inside functions to keep the cost of heavy imports in the
+# single test that needs them.
 "tests/*" = ["PLC0415"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 filterwarnings = ["ignore::DeprecationWarning"]
-# La racine du dépôt doit être sur sys.path pour que `src` et `scripts` soient
-# importables. Sans cette ligne, la collecte réussit sur une machine où la
-# racine s'y trouve déjà pour une autre raison, et échoue en CI sur
-# ModuleNotFoundError. C'est précisément le genre de « ça marche chez moi »
-# qu'une intégration continue existe pour attraper.
+# The repository root has to be on sys.path for `src` and `scripts` to be
+# importable. Without this line, collection succeeds on a machine where the root
+# is already there for another reason and fails in CI on ModuleNotFoundError,
+# which is exactly the "works on my machine" that continuous integration exists
+# to catch.
 pythonpath = ["."]

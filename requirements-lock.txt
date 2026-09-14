@@ -1,13 +1,14 @@
-# Versions exactes ayant produit reports/benchmark.json.
+# The exact versions that produced reports/benchmark.json and
+# reports/experiments.json, on the Python release named in .python-version.
 #
-# requirements.txt donne les bornes basses, utiles pour ouvrir les notebooks
-# avec ce qu'on a sous la main. Ce fichier-ci sert à reproduire les chiffres
-# publiés dans le README au chiffre près.
+# requirements.txt gives lower bounds, useful for opening the notebooks with
+# whatever is already installed. This file reproduces the published figures to
+# the last digit.
 #
-# La distinction n'est pas cosmétique. Les notebooks ont été exécutés en 2025
-# sous Python 3.9 et une version de scikit-learn antérieure ; comparer leurs
-# métriques à celles d'un script lancé aujourd'hui mélange deux variables. Le
-# benchmark fixe donc son environnement, et mesure ses écarts à l'intérieur.
+# The distinction is not cosmetic. The notebooks ran in 2025 under Python 3.9
+# and an older scikit-learn; comparing their metrics against a script run today
+# mixes two variables. The benchmark therefore fixes its environment and
+# measures its gaps inside it.
 #
 #     pip install -r requirements-lock.txt
 
@@ -18,6 +19,6 @@ scikit-learn==1.9.0
 scipy==1.18.0
 seaborn==0.13.2
 
-# Outillage
+# Tooling
 pytest==9.1.1
 ruff==0.16.0

@@ -1,188 +1,143 @@
-"""Comparatif honnête des modèles : mêmes données, même protocole, vrais repères.
+"""Supervised benchmark: real baselines, a clean protocol, and the cost of a leak.
 
-Ce que ce script établit
+What this script establishes
+----------------------------
+
+The original notebooks published scores with nothing to read them against. This
+script measures what a non-model gets, then what a stupid model gets, and only
+then what the tuned models get. The distance between those three levels is the
+only result that means anything.
+
+It also fixes four defects of the original chain:
+
+1. **A labelling error.** LP3 names its healthy class ``ok`` and never uses
+   ``normal``. The binary encoder matched on ``normal`` alone, so the 20 healthy
+   LP3 executions counted as failures and that subset looked 100% faulty. Fixed
+   in ``src/data/loader.py``: 129 healthy executions out of 463, not 109.
+
+2. **No baseline.** The constant answer, the best single feature at a single
+   threshold, and a depth-2 tree are all reported first.
+
+3. **An F1 whose definition moved.** Notebook 03 printed a weighted average,
+   notebook 05 the positive-class F1, and notebook 04 both for the same model.
+   Here ``f1_anomaly`` is the reference and ``f1_weighted`` is named.
+
+4. **Two different test sets.** The supervised models were scored on 93
+   executions and the unsupervised ones on 376. Every model in this project now
+   shares one held-out set.
+
+The duplicate leak
+------------------
+
+The five subsets are not five recordings. LP2 and LP3 annotate the same 47
+executions under two fault taxonomies, LP4 and LP5 share 116 more, and the
+merged frame holds 463 rows over 251 distinct traces. Under a random split, 69%
+of the test set has an exact copy in the training half, which is where the
+perfect scores came from.
+
+Every model is therefore evaluated twice: once under the random split that
+every published result on this dataset uses, and once under a grouped split
+where no trace appears on both sides. Both splits hold 370 training and 93 test
+executions at the same class balance, so the only variable between them is the
+grouping.
+
+The standardisation leak
 ------------------------
 
-Les notebooks publiaient des scores sans rien contre quoi les lire. Ce script
-mesure d'abord ce qu'obtient un non-modèle, puis ce qu'obtient un modèle bête,
-et seulement ensuite ce qu'obtiennent les modèles réglés. L'écart entre ces
-trois niveaux est le seul résultat qui ait un sens.
+The notebooks standardise before they split, so the scaler sees the test half.
+This script runs both protocols in the *same* environment with the same seeds,
+which is the only way to attribute a gap to the leak rather than to five years
+of scikit-learn releases.
 
-Il corrige quatre défauts de la chaîne d'origine :
-
-1. **Une erreur d'étiquetage.** LP3 nomme sa classe saine « ok » et n'emploie
-   jamais « normal ». Le codage binaire ne reconnaissait que « normal », donc
-   les 20 exécutions saines de LP3 étaient comptées comme des défaillances et
-   ce sous-ensemble paraissait défaillant à 100 %. Corrigé dans
-   `src/utils.py` : 129 exécutions saines sur 463, et non 109.
-
-2. **Aucun repère.** On ajoute la réponse constante, la meilleure feature seule
-   à un seul seuil, et un arbre de profondeur 2.
-
-3. **Un F1 aux définitions changeantes.** Le notebook 03 imprime une moyenne
-   pondérée, le 05 le F1 de la classe positive, et le 04 les deux pour le même
-   modèle. Ici `f1_anomaly` est la référence et `f1_weighted` est nommée.
-
-4. **Deux jeux de test différents.** Le supervisé était évalué sur 93
-   échantillons, le non supervisé sur 376. Les deux partagent désormais le même.
-
-La fuite de standardisation
----------------------------
-
-Les notebooks standardisent avant de découper, donc le scaler voit le jeu de
-test. Le script rejoue les deux protocoles dans le MÊME environnement, avec les
-mêmes graines : c'est la seule façon d'attribuer un écart à la fuite plutôt
-qu'à cinq ans d'évolution de scikit-learn.
+One-class detection has moved to ``scripts/experiments.py``, which scores it on
+continuous anomaly scores rather than on a fixed decision, and which runs the
+threshold and transfer studies.
 
 Usage
 -----
 
     make benchmark
-    ./.venv/bin/python scripts/benchmark.py --output reports/benchmark.json
-
-La sortie console est lisible ; le JSON est versionné pour que le README ne
-demande jamais qu'on le croie sur parole.
+    python scripts/benchmark.py --output reports/benchmark.json --config configs/default.toml
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
 import numpy as np
 import sklearn
-from sklearn.ensemble import GradientBoostingClassifier, IsolationForest, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score,
-    roc_auc_score,
-)
-from sklearn.model_selection import GridSearchCV, StratifiedKFold, train_test_split
-from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC, OneClassSVM
-from sklearn.tree import DecisionTreeClassifier
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.utils import create_statistical_features, encode_labels, load_robot_data
+from src.config import Config, load_config, set_seed, setup_logging
+from src.data.loader import duplicate_summary, encode_labels, load_robot_data, trace_ids
+from src.evaluation.metrics import confusion, score
+from src.evaluation.protocol import grouped_split, random_split
+from src.features.statistical import create_statistical_features, feature_matrix
+from src.models.supervised import build_grids, decision_stump, search, shallow_tree
 
+logger = logging.getLogger("benchmark")
+
+# Kept at module level: tests/test_protocol.py imports them, and the published
+# numbers are only reproducible if these are the values that produced them.
 RANDOM_STATE = 42
 TEST_SIZE = 0.2
 CV_FOLDS = 5
 
-# Mêmes grilles que src/models.py, à deux détails près, signalés en commentaire.
-GRIDS = {
-    "logistic_regression": (
-        LogisticRegression(random_state=RANDOM_STATE),
-        {
-            "model__C": [0.1, 1, 10, 100],
-            "model__penalty": ["l1", "l2"],
-            "model__solver": ["liblinear", "saga"],
-            # Les notebooks descendaient à 100 itérations, ce qui produisait
-            # 260 ConvergenceWarning. Le plancher est relevé : un modèle qui
-            # n'a pas convergé n'est pas un résultat, c'est un incident.
-            "model__max_iter": [500, 2000],
-        },
-    ),
-    "random_forest": (
-        RandomForestClassifier(random_state=RANDOM_STATE, n_jobs=-1),
-        {
-            "model__n_estimators": [50, 100, 200],
-            "model__max_depth": [10, 20, None],
-        },
-    ),
-    "svm_rbf": (
-        SVC(kernel="rbf", probability=True, random_state=RANDOM_STATE),
-        {
-            "model__C": [0.1, 1, 10],
-            "model__gamma": ["scale", "auto", 0.001, 0.01],
-        },
-    ),
-    "gradient_boosting": (
-        GradientBoostingClassifier(random_state=RANDOM_STATE),
-        {
-            "model__n_estimators": [50, 100, 200],
-            "model__learning_rate": [0.01, 0.1, 0.2],
-            "model__max_depth": [3, 5, 7],
-        },
-    ),
-}
-
-
-#: Colonnes de service du frame statistique. Tout le reste est une feature.
-#: `label_encoded` et `label_binary` sont numériques et valent la cible : les
-#: exclure par leur nom est plus sûr que de filtrer sur le type.
-META_COLUMNS = frozenset({"label", "label_encoded", "label_binary", "label_original", "source"})
-
-#: Noms des 48 features, dans l'ordre des colonnes de X. Rempli par
-#: build_dataset, pour que le repère « un seul capteur » puisse nommer lequel.
+#: Names of the 48 features, in column order. Filled by build_dataset so that
+#: the single-feature baseline can say which sensor statistic it used.
 FEATURE_NAMES: list[str] = []
 
 
 def build_dataset() -> tuple[np.ndarray, np.ndarray]:
-    """Reproduit la préparation des notebooks : features statistiques, cible binaire.
+    """Load, label and featurise, returning the model matrix and the target."""
+    X, y, _ = build_dataset_with_groups()
+    return X, y
 
-    Les colonnes de service sont exclues nommément et non par leur type. Le
-    frame renvoyé par create_statistical_features contient `label_encoded` et
-    `label_binary`, deux colonnes numériques qui SONT la cible : les laisser
-    entrer donne un F1 de 1,0000, ce qui n'est pas un résultat mais une fuite.
+
+def build_dataset_with_groups() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The matrix, the target, and the trace identity of every execution.
+
+    The third array is what makes a grouped split possible: two rows share an
+    identifier exactly when they are the same physical recording annotated
+    twice.
     """
-    frame = load_robot_data()
-    frame, _ = encode_labels(frame, binary=True)
+    frame, _ = encode_labels(load_robot_data(), binary=True)
     features = create_statistical_features(frame)
-
-    columns = [c for c in features.columns if c not in META_COLUMNS]
-    if len(columns) != 48:
-        raise RuntimeError(f"48 features statistiques attendues, {len(columns)} trouvées")
+    X, columns = feature_matrix(features)
 
     FEATURE_NAMES.clear()
     FEATURE_NAMES.extend(columns)
-    return features[columns].to_numpy(dtype=float), frame["label_encoded"].to_numpy(dtype=int)
-
-
-def score(y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray | None) -> dict:
-    """Un seul jeu de métriques, nommées sans ambiguïté.
-
-    `f1_anomaly` est la mesure de référence : la classe positive est l'anomalie,
-    et c'est elle qui compte dans un contexte de sécurité. `f1_weighted` est
-    donnée à côté parce que c'est elle que les notebooks affichaient.
-    """
-    result = {
-        "accuracy": accuracy_score(y_true, y_pred),
-        "precision_anomaly": precision_score(y_true, y_pred, pos_label=1, zero_division=0),
-        "recall_anomaly": recall_score(y_true, y_pred, pos_label=1, zero_division=0),
-        "f1_anomaly": f1_score(y_true, y_pred, pos_label=1, zero_division=0),
-        "f1_weighted": f1_score(y_true, y_pred, average="weighted", zero_division=0),
-    }
-    result["roc_auc"] = roc_auc_score(y_true, y_proba) if y_proba is not None else None
-    return result
+    return (
+        X,
+        frame["label_encoded"].to_numpy(dtype=int),
+        trace_ids(frame),
+    )
 
 
 def run_baselines(y_test: np.ndarray, X_train=None, y_train=None, X_test=None) -> dict:
-    """Les repères sans lesquels aucun score ne se lit.
+    """The baselines without which no score can be read.
 
-    Trois niveaux de bêtise croissante, et c'est l'écart entre eux qui dit ce
-    qu'un modèle apporte réellement :
+    Three levels of decreasing stupidity, and it is the distance between them
+    that says what a model actually contributes:
 
-      1. répondre toujours « anomalie ». Le jeu en contient 72 %, donc ce
-         non-modèle obtient déjà un F1 élevé sur la classe positive ;
-      2. un seul capteur, un seul seuil. C'est le repère que presque personne
-         ne publie, et c'est le plus instructif : s'il suffit, la question
-         n'était pas difficile ;
-      3. un arbre de profondeur 2, soit trois décisions en tout.
+    1. always answer "anomaly". The set is 72% failures, so this non-model
+       already scores highly on the positive class;
+    2. one sensor, one threshold. This is the baseline almost nobody publishes,
+       and it is the most instructive: if it suffices, the problem was not hard;
+    3. a depth-2 tree, three decisions in total.
 
-    Un modèle réglé par recherche d'hyperparamètres ne se juge pas contre zéro,
-    il se juge contre ces trois-là.
+    A grid-searched model is not judged against zero. It is judged against
+    these.
     """
     results = {
-        "always_anomaly": score(y_test, np.ones_like(y_test), None),
-        "always_normal": score(y_test, np.zeros_like(y_test), None),
+        "always_anomaly": score(y_test, np.ones_like(y_test)),
+        "always_normal": score(y_test, np.zeros_like(y_test)),
     }
 
     if X_train is None:
@@ -190,176 +145,206 @@ def run_baselines(y_test: np.ndarray, X_train=None, y_train=None, X_test=None) -
 
     best = None
     for index in range(X_train.shape[1]):
-        stump = DecisionTreeClassifier(max_depth=1, random_state=RANDOM_STATE)
-        stump.fit(X_train[:, [index]], y_train)
-        current = score(y_test, stump.predict(X_test[:, [index]]), None)
+        stump = decision_stump(RANDOM_STATE).fit(X_train[:, [index]], y_train)
+        current = score(y_test, stump.predict(X_test[:, [index]]))
         if best is None or current["f1_anomaly"] > best[0]["f1_anomaly"]:
             best = (current, index)
 
     name = FEATURE_NAMES[best[1]] if best[1] < len(FEATURE_NAMES) else str(best[1])
     results["best_single_feature"] = {**best[0], "feature": name}
 
-    shallow = DecisionTreeClassifier(max_depth=2, random_state=RANDOM_STATE)
-    shallow.fit(X_train, y_train)
-    results["depth_2_tree"] = score(y_test, shallow.predict(X_test), None)
+    tree = shallow_tree(RANDOM_STATE).fit(X_train, y_train)
+    results["depth_2_tree"] = score(y_test, tree.predict(X_test))
 
     return results
 
 
-def run_supervised(X_train, X_test, y_train, y_test, leaky: bool = False) -> dict:
-    """Cherche puis évalue chaque modèle.
+def run_supervised(
+    X_train,
+    X_test,
+    y_train,
+    y_test,
+    config: Config,
+    leaky: bool = False,
+    groups_train=None,
+) -> dict:
+    """Search then evaluate each classifier.
 
-    `leaky=False` place le scaler dans le Pipeline : il est réajusté sur les
-    seuls plis d'entraînement à chaque tour de validation croisée.
+    ``leaky=False`` puts the scaler inside the Pipeline, so it is refitted on
+    the training folds alone at every turn of the cross-validation.
 
-    `leaky=True` reproduit le défaut des notebooks : les données arrivent déjà
-    standardisées sur le jeu complet, le scaler ayant vu le jeu de test. Le
-    pipeline ne contient alors plus que le modèle.
+    ``leaky=True`` reproduces the notebooks' defect: the data arrives already
+    standardised over the whole dataset, the scaler having seen the test half.
 
-    Les deux modes tournent dans le MÊME environnement, avec les mêmes graines
-    et les mêmes grilles. C'est la seule façon d'attribuer un écart à la fuite
-    plutôt qu'à une version de bibliothèque : comparer les chiffres d'un
-    notebook exécuté en 2025 sous Python 3.9 à ceux d'un script exécuté
-    aujourd'hui mélangerait deux variables et ne prouverait rien.
+    ``groups_train`` switches the inner cross-validation to a grouped one, so
+    that a search run under the grouped protocol does not put the duplicates
+    back inside the folds it selects on.
+
+    Both modes run in the same environment with the same seeds and the same
+    grids. Comparing a notebook executed in 2025 under Python 3.9 against a
+    script run today would mix two variables and prove nothing.
     """
-    cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_STATE)
     results = {}
 
-    for name, (estimator, grid) in GRIDS.items():
-        steps = (
-            [("model", estimator)]
-            if leaky
-            else [("scaler", StandardScaler()), ("model", estimator)]
+    for name, (estimator, grid) in build_grids(config.random_state).items():
+        fitted = search(
+            estimator,
+            grid,
+            X_train,
+            y_train,
+            folds=config.cv_folds,
+            random_state=config.random_state,
+            scale=not leaky,
+            groups=groups_train,
         )
-        pipeline = Pipeline(steps)
-        search = GridSearchCV(pipeline, grid, cv=cv, scoring="f1", n_jobs=-1, refit=True)
-        search.fit(X_train, y_train)
 
-        y_pred = search.predict(X_test)
-        y_proba = search.predict_proba(X_test)[:, 1]
+        y_pred = fitted.predict(X_test)
+        y_proba = fitted.predict_proba(X_test)[:, 1]
 
         results[name] = {
             **score(y_test, y_pred, y_proba),
-            "cv_f1_mean": search.best_score_,
-            "cv_f1_std": search.cv_results_["std_test_score"][search.best_index_],
-            "best_params": {k.replace("model__", ""): v for k, v in search.best_params_.items()},
+            **confusion(y_test, y_pred),
+            "cv_f1_mean": fitted.best_score_,
+            "cv_f1_std": fitted.cv_results_["std_test_score"][fitted.best_index_],
+            "best_params": {k.replace("model__", ""): v for k, v in fitted.best_params_.items()},
         }
-        print(f"  {name:20s} f1(anomalie)={results[name]['f1_anomaly']:.4f}")
-
-    return results
-
-
-def run_unsupervised(X_train, X_test, y_train, y_test) -> dict:
-    """Non supervisé, évalué sur le MÊME jeu de test que le supervisé.
-
-    Les deux modèles n'apprennent que sur les exécutions normales du jeu
-    d'entraînement, ce qui est le cadre d'emploi réel : on dispose d'exemples de
-    fonctionnement sain, pas d'un catalogue de pannes.
-    """
-    scaler = StandardScaler().fit(X_train[y_train == 0])
-    train_normal = scaler.transform(X_train[y_train == 0])
-    test_scaled = scaler.transform(X_test)
-
-    results = {}
-
-    # `contamination` décrit la proportion d'anomalies dans le jeu D'ENTRAÎNEMENT,
-    # pas dans le jeu de test. Ici l'entraînement ne contient que des exécutions
-    # normales, donc la contamination attendue est proche de zéro et 'auto' est
-    # le réglage correct. Y mettre la proportion d'anomalies du jeu complet, 76 %,
-    # serait à la fois faux et refusé par scikit-learn, qui plafonne à 0,5.
-    forest = IsolationForest(contamination="auto", random_state=RANDOM_STATE, n_jobs=-1)
-    forest.fit(train_normal)
-    results["isolation_forest"] = {
-        **score(y_test, (forest.predict(test_scaled) == -1).astype(int), None),
-        "n_train_normal": len(train_normal),
-    }
-
-    oc_svm = OneClassSVM(kernel="rbf", gamma="scale", nu=0.1)
-    oc_svm.fit(train_normal)
-    results["one_class_svm"] = {
-        **score(y_test, (oc_svm.predict(test_scaled) == -1).astype(int), None),
-        "n_train_normal": len(train_normal),
-    }
-
-    for name, value in results.items():
-        print(f"  {name:20s} f1(anomalie)={value['f1_anomaly']:.4f}")
+        logger.info("%-20s f1(anomaly)=%.4f", name, results[name]["f1_anomaly"])
 
     return results
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("--output", type=Path, default=None, help="Chemin du rapport JSON")
+    parser.add_argument("--output", type=Path, default=None, help="path of the JSON report")
+    parser.add_argument("--config", type=Path, default=None, help="path of the TOML configuration")
     args = parser.parse_args()
 
-    X, y = build_dataset()
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
+    setup_logging()
+    config = load_config(args.config)
+    set_seed(config.random_state)
+
+    X, y, groups = build_dataset_with_groups()
+    frame_duplicates = duplicate_summary(encode_labels(load_robot_data(), binary=True)[0])
+    logger.info(
+        "%d executions over %d distinct traces (%.0f%% duplicated)",
+        frame_duplicates["n_executions"],
+        frame_duplicates["n_distinct_traces"],
+        frame_duplicates["duplicate_share"] * 100,
     )
 
-    # Le protocole fuité des notebooks : standardiser AVANT de découper. Le
-    # découpage porte alors sur des données que le scaler a toutes vues.
-    X_leaky = StandardScaler().fit_transform(X)
-    Xl_train, Xl_test, yl_train, yl_test = train_test_split(
-        X_leaky, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
-    )
+    random_protocol = random_split(X, y, groups, config.test_size, config.random_state)
+    grouped_protocol = grouped_split(X, y, groups, config.cv_folds, config.random_state)
 
-    print(f"Jeu complet      : {X.shape[0]} exécutions, {X.shape[1]} features statistiques")
-    print(f"Entraînement     : {len(y_train)} ({int((y_train == 1).sum())} anomalies)")
-    print(f"Test             : {len(y_test)} ({int((y_test == 1).sum())} anomalies)")
-    baselines = run_baselines(y_test, X_train, y_train, X_test)
-    print("\nLes repères à battre, du plus bête au moins bête")
+    logger.info("baselines on the grouped test set, from the stupidest up")
+    baselines = run_baselines(
+        grouped_protocol.y_test,
+        grouped_protocol.X_train,
+        grouped_protocol.y_train,
+        grouped_protocol.X_test,
+    )
     for name, value in baselines.items():
-        print(
-            f"  {name:22s} f1(anomalie)={value['f1_anomaly']:.4f} accuracy={value['accuracy']:.4f}"
+        logger.info(
+            "%-22s f1(anomaly)=%.4f accuracy=%.4f",
+            name,
+            value["f1_anomaly"],
+            value["accuracy"],
         )
 
-    print("\nSupervisé, scaler ajusté sur le jeu complet (le défaut des notebooks)")
-    leaky = run_supervised(Xl_train, Xl_test, yl_train, yl_test, leaky=True)
+    baselines_random = run_baselines(
+        random_protocol.y_test,
+        random_protocol.X_train,
+        random_protocol.y_train,
+        random_protocol.X_test,
+    )
 
-    print("\nSupervisé, scaler dans le pipeline")
-    supervised = run_supervised(X_train, X_test, y_train, y_test)
+    # The notebooks' second defect: standardise BEFORE splitting, so the scaler
+    # sees the test half. Measured on the random protocol, which is the one the
+    # notebooks used, and in this same environment so that the gap is the leak
+    # and not five years of scikit-learn releases.
+    X_leaky = StandardScaler().fit_transform(X)
+    leaky_protocol = random_split(X_leaky, y, groups, config.test_size, config.random_state)
 
-    print("\nCoût réel de la fuite, à environnement identique")
-    print(f"  {'modèle':22s} {'fuité':>8s} {'corrigé':>9s} {'écart':>8s}")
-    for name in supervised:
+    logger.info("supervised, random split, scaler fitted on the whole dataset")
+    leaky = run_supervised(
+        leaky_protocol.X_train,
+        leaky_protocol.X_test,
+        leaky_protocol.y_train,
+        leaky_protocol.y_test,
+        config,
+        leaky=True,
+    )
+
+    logger.info("supervised, random split, scaler inside the pipeline")
+    supervised_random = run_supervised(
+        random_protocol.X_train,
+        random_protocol.X_test,
+        random_protocol.y_train,
+        random_protocol.y_test,
+        config,
+    )
+
+    logger.info("supervised, grouped split, no trace on both sides")
+    supervised = run_supervised(
+        grouped_protocol.X_train,
+        grouped_protocol.X_test,
+        grouped_protocol.y_train,
+        grouped_protocol.y_test,
+        config,
+        groups_train=grouped_protocol.groups_train,
+    )
+
+    logger.info("what the standardisation leak was worth, at constant environment")
+    for name in supervised_random:
         before = leaky[name]["f1_anomaly"]
-        after = supervised[name]["f1_anomaly"]
-        print(f"  {name:22s} {before:8.4f} {after:9.4f} {after - before:+8.4f}")
+        after = supervised_random[name]["f1_anomaly"]
+        logger.info("%-22s leaky %.4f  clean %.4f  %+.4f", name, before, after, after - before)
 
-    print("\nNon supervisé, entraîné sur les seules exécutions normales")
-    unsupervised = run_unsupervised(X_train, X_test, y_train, y_test)
+    logger.info("what the duplicate leak was worth, same features, same grids")
+    for name in supervised:
+        before = supervised_random[name]["f1_anomaly"]
+        after = supervised[name]["f1_anomaly"]
+        logger.info("%-22s random %.4f  grouped %.4f  %+.4f", name, before, after, after - before)
 
     report = {
         "protocol": {
             "n_total": int(X.shape[0]),
             "n_features": int(X.shape[1]),
-            "n_train": len(y_train),
-            "n_test": len(y_test),
-            "test_size": TEST_SIZE,
-            "cv_folds": CV_FOLDS,
-            "random_state": RANDOM_STATE,
+            "n_train": len(grouped_protocol.y_train),
+            "n_test": len(grouped_protocol.y_test),
+            "test_size": config.test_size,
+            "cv_folds": config.cv_folds,
+            "random_state": config.random_state,
             "scaler_inside_cv": True,
-            "anomaly_share_test": float((y_test == 1).mean()),
+            "headline_split": "grouped",
+            "anomaly_share_test": float(grouped_protocol.y_test.mean()),
         },
+        "duplicates": frame_duplicates,
+        "splits": {
+            "random": random_protocol.summary(),
+            "grouped": grouped_protocol.summary(),
+        },
+        "config": config.to_dict(),
         "environment": {
             "python": sys.version.split()[0],
             "scikit_learn": sklearn.__version__,
             "numpy": np.__version__,
         },
         "baselines": baselines,
-        "supervised_leaky": leaky,
+        "baselines_random": baselines_random,
         "supervised": supervised,
-        "unsupervised": unsupervised,
+        "supervised_random": supervised_random,
+        "supervised_leaky": leaky,
     }
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-        print(f"\nRapport écrit dans {args.output}")
+        logger.info("report written to %s", args.output)
 
-    best = max(supervised.items(), key=lambda kv: kv[1]["f1_anomaly"])
-    print(f"\nMeilleur modèle supervisé : {best[0]} (f1 anomalie {best[1]['f1_anomaly']:.4f})")
+    best = max(supervised.items(), key=lambda item: item[1]["f1_anomaly"])
+    logger.info(
+        "best supervised model, grouped split: %s (f1 %.4f)", best[0], best[1]["f1_anomaly"]
+    )
     return 0
 
 

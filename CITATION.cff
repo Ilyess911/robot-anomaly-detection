@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: "Robot Anomaly Detection: a reproducible baseline study on the UCI Robot Execution Failures dataset"
+message: "If you use this code or its findings, please cite the dataset first and this repository second."
+type: software
+authors:
+  - given-names: Ilyess
+    family-names: Assadi
+    affiliation: "ESILV, Paris"
+  - given-names: Adel
+    family-names: Bousri
+    affiliation: "ESILV, Paris"
+repository-code: "https://github.com/Ilyess911/robot-anomaly-detection"
+license: MIT
+keywords:
+  - anomaly detection
+  - predictive maintenance
+  - industrial robotics
+  - data leakage
+  - reproducibility
+references:
+  - type: dataset
+    title: "Robot Execution Failures"
+    authors:
+      - given-names: Luis
+        family-names: "Seabra Lopes"
+      - given-names: "Luis M."
+        family-names: "Camarinha-Matos"
+    url: "https://archive.ics.uci.edu/dataset/138/robot+execution+failures"
+    institution:
+      name: "UCI Machine Learning Repository"
