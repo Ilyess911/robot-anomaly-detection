@@ -20,6 +20,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import matplotlib
+
+# Streamlit executes the script on a worker thread, and matplotlib's default
+# macOS backend refuses to build a figure outside the main thread. Selecting the
+# non-interactive backend has to happen before pyplot is imported, which is why
+# it sits above the import rather than inside a function.
+matplotlib.use("Agg")
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -158,7 +166,7 @@ def main() -> None:
     axis.set_ylabel("anomaly score")
     axis.legend(loc="upper left", frameon=False)
     axis.spines[["top", "right"]].set_visible(False)
-    st.pyplot(figure, use_container_width=True)
+    st.pyplot(figure, width="stretch")
 
     st.subheader("Inspect one execution")
     positions = np.flatnonzero(target_mask)
@@ -187,7 +195,7 @@ def main() -> None:
         axis.spines[["top", "right"]].set_visible(False)
     axes[0][0].legend(fontsize=8, frameon=False)
     figure.tight_layout()
-    st.pyplot(figure, use_container_width=True)
+    st.pyplot(figure, width="stretch")
 
     st.subheader("Every execution, worst first")
     st.dataframe(
@@ -199,7 +207,7 @@ def main() -> None:
                 "recorded label": frame["label"].to_numpy()[positions],
             }
         ).sort_values("anomaly score", ascending=False),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 
