@@ -343,6 +343,197 @@ def figure_threshold(experiments: dict, out: Path) -> None:
     plt.close(figure)
 
 
+def figure_cross_validated(experiments: dict, out: Path) -> None:
+    """The headline one-class numbers with their uncertainty, over 25 fits.
+
+    A single fold put all four detectors at ROC-AUC 1.000 and invited exactly
+    the disbelief that deserves. Five repeats of grouped five-fold give an
+    interval instead of a point, and the intervals are what decide whether two
+    detectors differ at all.
+    """
+    cv = experiments.get("cross_validated", {})
+    if not cv:
+        logger.warning("no cross-validated section in the report, figure skipped")
+        return
+
+    names = [name for name in DETECTOR_ORDER if name in cv]
+    position = np.arange(len(names))
+    width = 0.38
+
+    figure, axes = plt.subplots(1, 2, figsize=(11.4, 4.4))
+
+    for axis, metric, title in (
+        (axes[0], "roc_auc", "Ranking quality (ROC-AUC)"),
+        (axes[1], "f1_percentile", "F1 at the label-free threshold"),
+    ):
+        means = [cv[name][metric]["mean"] for name in names]
+        errors = [
+            [cv[name][metric]["mean"] - cv[name][metric]["ci95_low"] for name in names],
+            [cv[name][metric]["ci95_high"] - cv[name][metric]["mean"] for name in names],
+        ]
+        axis.bar(position, means, width * 1.6, yerr=errors, capsize=4, color=HEALTHY)
+        axis.set_xticks(position)
+        axis.set_xticklabels([PRETTY[name].replace(" ", "\n") for name in names], fontsize=8)
+        axis.set_ylim(0.4, 1.03)
+        axis.set_title(title, fontsize=11)
+        axis.grid(axis="x", visible=False)
+
+    axes[0].set_ylabel("mean over 25 folds, with 95% interval")
+    figure.suptitle(
+        "Five repeats of grouped five-fold. The single-fold 1.000 does not survive it", y=1.0
+    )
+    figure.tight_layout()
+    figure.savefig(out / "cross-validated.png")
+    plt.close(figure)
+
+
+def figure_calibration(experiments: dict, out: Path) -> None:
+    """What the threshold promised against what it delivered.
+
+    The target is 5%. Three of the four detectors flag more than half of the
+    healthy executions they have never seen, and the duplicates were hiding most
+    of that: without grouping the same rule looks three times better than it is.
+    """
+    grouped = experiments.get("cross_validated", {})
+    ungrouped = experiments.get("cross_validated_ungrouped", {})
+    if not grouped:
+        logger.warning("no cross-validated section in the report, figure skipped")
+        return
+
+    names = [name for name in DETECTOR_ORDER if name in grouped]
+    position = np.arange(len(names))
+    width = 0.26
+
+    figure, axis = plt.subplots(figsize=(9.4, 4.6))
+    series = [
+        ("random folds, duplicates on both sides", ungrouped, "far_percentile", GREY),
+        ("grouped folds, percentile rule", grouped, "far_percentile", ANOMALY),
+        ("grouped folds, tolerance bound", grouped, "far_tolerance", HEALTHY),
+    ]
+
+    for index, (label, source, metric, color) in enumerate(series):
+        if not source:
+            continue
+        means = [source[name][metric]["mean"] * 100 for name in names]
+        errors = [
+            [
+                (source[name][metric]["mean"] - source[name][metric]["ci95_low"]) * 100
+                for name in names
+            ],
+            [
+                (source[name][metric]["ci95_high"] - source[name][metric]["mean"]) * 100
+                for name in names
+            ],
+        ]
+        axis.bar(
+            position + (index - 1) * width,
+            means,
+            width,
+            yerr=errors,
+            capsize=3,
+            color=color,
+            label=label,
+        )
+
+    # The target is drawn as a legend entry rather than floating text: every
+    # bar group is tall enough that an annotation lands on top of data.
+    axis.axhline(
+        5,
+        color=DARK,
+        linestyle="--",
+        linewidth=1.2,
+        label="target: 5% of healthy executions flagged",
+    )
+    axis.set_xticks(position)
+    axis.set_xticklabels([PRETTY[name] for name in names], fontsize=9)
+    axis.set_ylabel("false alarm rate actually realised (%)")
+    axis.set_title("A threshold that promises 5% and delivers 60%")
+    axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.13), ncol=2, fontsize=9)
+    axis.grid(axis="x", visible=False)
+    figure.savefig(out / "calibration.png")
+    plt.close(figure)
+
+
+def figure_deployment_cost(deployment: dict, out: Path) -> None:
+    """Expected cost per execution on a line that fails once in a hundred.
+
+    Four policies on one axis. Doing nothing and stopping on everything bound the
+    problem; the best reachable operating point says what the detector is worth;
+    the two label-free rules say what a deployment would actually get. The gap
+    between the last two and the third is the price of not being able to
+    calibrate.
+    """
+    economics = deployment.get("economics", {})
+    if not economics:
+        logger.warning("no economics section in the report, figure skipped")
+        return
+
+    names = [name for name in DETECTOR_ORDER if name in economics]
+    reference = economics[names[0]]["reference_case"]
+    nothing = reference["best_reachable"]["cost_of_doing_nothing"]
+    always = reference["best_reachable"]["cost_of_always_stopping"]
+
+    position = np.arange(len(names))
+    width = 0.27
+
+    figure, axis = plt.subplots(figsize=(9.6, 4.6))
+    bars = [
+        (
+            "percentile rule, what a deployment gets",
+            [
+                economics[name]["reference_case"]["at_label_free_threshold"]["percentile"][
+                    "expected_cost"
+                ]
+                for name in names
+            ],
+            ANOMALY,
+        ),
+        (
+            "tolerance bound, what a guarantee gets",
+            [
+                economics[name]["reference_case"]["at_label_free_threshold"]["tolerance"][
+                    "expected_cost"
+                ]
+                for name in names
+            ],
+            ACCENT,
+        ),
+        (
+            "best reachable, needs the labels",
+            [
+                economics[name]["reference_case"]["best_reachable"]["expected_cost"]
+                for name in names
+            ],
+            HEALTHY,
+        ),
+    ]
+
+    for index, (label, values, color) in enumerate(bars):
+        axis.bar(position + (index - 1) * width, values, width, color=color, label=label)
+
+    # The two trivial policies land within a percent of each other here, so one
+    # annotation carries both rather than two labels fighting for the same strip.
+    axis.axhline(nothing, color=DARK, linestyle="--", linewidth=1.1)
+    axis.axhline(always, color=GREY, linestyle=":", linewidth=1.1)
+    axis.text(
+        0.012,
+        0.955,
+        f"ignore every alarm ({nothing:.2f}) and stop on everything ({always:.2f})",
+        transform=axis.transAxes,
+        fontsize=8,
+        color=DARK,
+    )
+
+    axis.set_xticks(position)
+    axis.set_xticklabels([PRETTY[name] for name in names], fontsize=9)
+    axis.set_ylabel("expected cost per execution, in false alarms")
+    axis.set_title("One failure per hundred executions, a missed failure worth a hundred stops")
+    axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.14), ncol=3, fontsize=8)
+    axis.grid(axis="x", visible=False)
+    figure.savefig(out / "deployment-cost.png")
+    plt.close(figure)
+
+
 def figure_score_distributions(split, detectors, out: Path) -> None:
     """Why four detectors that rank identically well score so differently.
 
@@ -539,6 +730,8 @@ def main() -> int:
 
     benchmark = json.loads((args.reports / "benchmark.json").read_text())
     experiments = json.loads((args.reports / "experiments.json").read_text())
+    deployment_path = args.reports / "deployment.json"
+    deployment = json.loads(deployment_path.read_text()) if deployment_path.exists() else {}
 
     frame, _ = encode_labels(load_robot_data(), binary=True)
     features = create_statistical_features(frame)
@@ -548,6 +741,9 @@ def main() -> int:
     detectors = fit_detectors(split.X_train, split.y_train, config)
 
     figure_detection(split, detectors, args.output)
+    figure_cross_validated(experiments, args.output)
+    figure_calibration(experiments, args.output)
+    figure_deployment_cost(deployment, args.output)
     figure_signals(frame, args.output)
     figure_duplicate_leak(benchmark, args.output)
     figure_comparison(benchmark, experiments, args.output)
