@@ -285,6 +285,11 @@ check. All three now run on every commit.
 
 ![Mean force and torque per channel, healthy against failed](assets/healthy-vs-failed-signals.png)
 
+Failures are not separated by where the mean sits. They are separated by how
+much the signal moves, which is why the forest leans on dispersion first:
+
+![The fifteen sensor statistics the forest leans on](assets/feature-importance.png)
+
 ![Confusion matrices for the best supervised model and the best detector](assets/confusion-matrices.png)
 
 ## Design decisions

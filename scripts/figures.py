@@ -202,7 +202,7 @@ def figure_signals(frame, out: Path) -> None:
         Patch(color=HEALTHY, label=f"healthy ({len(healthy)} executions)"),
         Patch(color=ANOMALY, label=f"failed ({len(failed)} executions)"),
     ]
-    figure.legend(handles=handles, loc="upper center", ncol=2, bbox_to_anchor=(0.5, 1.06))
+    figure.legend(handles=handles, loc="upper center", ncol=2, bbox_to_anchor=(0.5, 1.10))
     figure.suptitle("Mean force and torque per channel, shaded to one standard deviation", y=1.0)
     figure.tight_layout()
     figure.savefig(out / "healthy-vs-failed-signals.png")
