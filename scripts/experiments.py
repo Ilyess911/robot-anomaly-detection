@@ -4,15 +4,19 @@ Three questions, three experiments
 ----------------------------------
 
 **Can a detector that has never seen a failure find one?** Four lightweight
-one-class models are fitted on the healthy training executions alone and scored
-on the shared held-out set. They are compared on ROC-AUC and PR-AUC, which
-depend on the ranking rather than on where a threshold happens to sit.
+one-class models are fitted on healthy executions alone and scored under
+repeated grouped cross-validation, five repeats of five folds, so every figure
+comes with a confidence interval over 25 fits rather than from one lucky split.
+Two detectors whose intervals overlap are reported as indistinguishable instead
+of ranked.
 
-**What does not having labels cost?** A deployed detector cannot pick the
-threshold that maximises F1, because computing that maximum needs the answers.
-It can only place the threshold at a percentile of the healthy training scores.
-Both are reported: the oracle maximum, and the F1 the percentile rule actually
-achieves. The gap between them is the honest cost of the missing labels.
+**What does not having labels cost, and can the threshold be made to promise
+something?** A deployed detector cannot pick the threshold that maximises F1,
+since computing that maximum needs the answers. Two label-free rules are
+compared on every fold: the usual percentile of the healthy training scores,
+which guarantees nothing, and a distribution-free tolerance bound that caps the
+false alarm rate with stated confidence. What each one promises and what each
+one delivers on held-out healthy runs are reported side by side.
 
 **Does it survive a change of task?** Leave-one-subset-out asks the harder
 question: fitted on four phases of the assembly task, does the detector still
@@ -47,11 +51,14 @@ from pathlib import Path
 
 import numpy as np
 import sklearn
+from scipy import stats as scipy_stats
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.config import Config, load_config, set_seed, setup_logging
 from src.data.loader import duplicate_summary, encode_labels, load_robot_data, trace_ids
+from src.evaluation.calibration import calibration_gap, percentile_threshold, tolerance_threshold
 from src.evaluation.metrics import confusion, score, threshold_curve
 from src.evaluation.protocol import grouped_split, random_split
 from src.features.statistical import create_statistical_features, feature_matrix
@@ -69,6 +76,11 @@ logger = logging.getLogger("experiments")
 #: fitted on, which no line would accept, and stops short of 100 because the
 #: last percentile is a single training point.
 PERCENTILE_SWEEP = (80, 85, 90, 92.5, 95, 97.5, 99)
+
+#: Repeats of the grouped five-fold cross-validation. Five repeats give 25 fits
+#: per detector, enough for a confidence interval that is not itself noise, and
+#: the detectors are cheap enough that the whole study runs in seconds.
+REPEATS = 5
 
 
 def build_detectors(config: Config) -> list:
@@ -143,6 +155,135 @@ def run_one_class(X_train, y_train, X_test, y_test, config: Config) -> dict:
         )
 
     return results
+
+
+def run_repeated_cv(X, y, groups, config: Config, repeats: int = 5, grouped: bool = True) -> dict:
+    """The headline one-class numbers: repeated grouped cross-validation.
+
+    A single held-out fold of 93 executions cannot separate 0.918 from 0.899,
+    and reporting four detectors at ROC-AUC 1.000 on one split invites exactly
+    the scepticism it deserves. This runs five repeats of grouped five-fold
+    cross-validation, so every detector is fitted and scored 25 times on
+    partitions where no sensor trace appears on both sides.
+
+    Each fold also carries the calibration study, because the threshold rules
+    have to be judged on the same partitions as the scores they threshold. For
+    every fold the two rules are calibrated on the healthy *training* runs and
+    their realised false alarm rate is measured on the healthy *held-out* runs,
+    which is the only measurement that says whether a rule works.
+
+    Returns per-detector aggregates with a t-based 95% confidence interval on
+    the mean over the 25 folds, so that two detectors whose intervals overlap
+    can be called indistinguishable instead of ranked.
+    """
+    per_detector: dict[str, dict[str, list[float]]] = {}
+
+    for repeat in range(repeats):
+        seed = config.random_state + repeat
+        if grouped:
+            splitter = StratifiedGroupKFold(
+                n_splits=config.cv_folds, shuffle=True, random_state=seed
+            )
+            folds = splitter.split(X, y, groups=groups)
+        else:
+            splitter = StratifiedKFold(n_splits=config.cv_folds, shuffle=True, random_state=seed)
+            folds = splitter.split(X, y)
+
+        for train_index, test_index in folds:
+            X_train, X_test = X[train_index], X[test_index]
+            y_train, y_test = y[train_index], y[test_index]
+            healthy_train = X_train[y_train == 0]
+            if len(healthy_train) < 30 or len(set(y_test)) < 2:
+                continue
+
+            for detector in build_detectors(config):
+                detector.fit(healthy_train)
+                test_scores = detector.anomaly_score(X_test)
+                healthy_test = test_scores[y_test == 0]
+
+                target = 1 - config.threshold_percentile / 100
+                rules = {
+                    "percentile": percentile_threshold(detector.train_scores_, target),
+                    "tolerance": tolerance_threshold(
+                        detector.train_scores_, target, confidence=0.90
+                    ),
+                }
+
+                bucket = per_detector.setdefault(detector.name, {})
+                analysis = threshold_curve(y_test, test_scores, detector.train_scores_)
+                bucket.setdefault("roc_auc", []).append(analysis.roc_auc)
+                bucket.setdefault("pr_auc", []).append(analysis.pr_auc)
+                bucket.setdefault("best_f1", []).append(analysis.best_f1)
+
+                for name, rule in rules.items():
+                    predicted = (test_scores > rule.value).astype(int)
+                    measured = score(y_test, predicted)
+                    bucket.setdefault(f"f1_{name}", []).append(measured["f1_anomaly"])
+                    bucket.setdefault(f"recall_{name}", []).append(measured["recall_anomaly"])
+                    bucket.setdefault(f"far_{name}", []).append(
+                        calibration_gap(rule, healthy_test)["realised_far"]
+                    )
+
+    results = {}
+    for name, metrics in per_detector.items():
+        results[name] = {metric: summarise(values) for metric, values in sorted(metrics.items())}
+        results[name]["n_folds"] = len(metrics["roc_auc"])
+        logger.info(
+            "%-20s roc_auc %s  f1(percentile) %s  f1(tolerance) %s",
+            name,
+            format_interval(results[name]["roc_auc"]),
+            format_interval(results[name]["f1_percentile"]),
+            format_interval(results[name]["f1_tolerance"]),
+        )
+
+    return results
+
+
+def summarise(values: list[float]) -> dict:
+    """Mean, spread, and a t-based 95% confidence interval on the mean."""
+    array = np.asarray(values, dtype=float)
+    array = array[~np.isnan(array)]
+    n = len(array)
+    mean = float(array.mean()) if n else float("nan")
+    std = float(array.std(ddof=1)) if n > 1 else 0.0
+    half = float(scipy_stats.t.ppf(0.975, n - 1) * std / np.sqrt(n)) if n > 1 else 0.0
+    return {
+        "mean": mean,
+        "std": std,
+        "ci95_low": mean - half,
+        "ci95_high": mean + half,
+        "min": float(array.min()) if n else float("nan"),
+        "max": float(array.max()) if n else float("nan"),
+        "n": n,
+    }
+
+
+def format_interval(summary: dict) -> str:
+    return f"{summary['mean']:.3f} [{summary['ci95_low']:.3f}, {summary['ci95_high']:.3f}]"
+
+
+def paired_comparison(cv: dict, metric: str = "f1_percentile") -> dict:
+    """Are the detectors actually different, or is the ranking noise.
+
+    Reports, for every pair, whether the 95% interval of one contains the mean
+    of the other. Two detectors that fail that test are reported as
+    indistinguishable on this data, which is the honest reading of a 0.02 gap
+    over 93 executions.
+    """
+    names = sorted(cv)
+    verdicts = {}
+    for first in names:
+        for second in names:
+            if first >= second:
+                continue
+            a, b = cv[first][metric], cv[second][metric]
+            overlap = a["ci95_low"] <= b["ci95_high"] and b["ci95_low"] <= a["ci95_high"]
+            verdicts[f"{first} vs {second}"] = {
+                "difference": a["mean"] - b["mean"],
+                "intervals_overlap": bool(overlap),
+                "distinguishable": not overlap,
+            }
+    return verdicts
 
 
 def run_threshold_sweep(X_train, y_train, X_test, y_test, config: Config) -> dict:
@@ -253,7 +394,36 @@ def main() -> int:
     random = random_split(X, y, groups, config.test_size, config.random_state)
 
     logger.info(
-        "one-class study, grouped split: %d healthy training runs, %d held out",
+        "repeated grouped cross-validation, %d repeats x %d folds",
+        REPEATS,
+        config.cv_folds,
+    )
+    cross_validated = run_repeated_cv(X, y, groups, config, repeats=REPEATS, grouped=True)
+    comparison = paired_comparison(cross_validated)
+
+    logger.info("the same study without grouping, to price the duplicates again")
+    cross_validated_ungrouped = run_repeated_cv(
+        X, y, groups, config, repeats=REPEATS, grouped=False
+    )
+    for name, grouped_metrics in cross_validated.items():
+        ungrouped = cross_validated_ungrouped[name]["far_percentile"]["mean"]
+        logger.info(
+            "%-20s realised false alarm rate: grouped %.1f%%, ungrouped %.1f%%, target %.1f%%",
+            name,
+            grouped_metrics["far_percentile"]["mean"] * 100,
+            ungrouped * 100,
+            (100 - config.threshold_percentile),
+        )
+    for pair, verdict in comparison.items():
+        logger.info(
+            "%-46s %+.3f  %s",
+            pair,
+            verdict["difference"],
+            "distinguishable" if verdict["distinguishable"] else "indistinguishable",
+        )
+
+    logger.info(
+        "single illustrative fold: %d healthy training runs, %d held out",
         int((grouped.y_train == 0).sum()),
         len(grouped.y_test),
     )
@@ -297,6 +467,9 @@ def main() -> int:
             "scikit_learn": sklearn.__version__,
             "numpy": np.__version__,
         },
+        "cross_validated": cross_validated,
+        "cross_validated_ungrouped": cross_validated_ungrouped,
+        "detector_comparison": comparison,
         "one_class": one_class,
         "one_class_random_split": one_class_random,
         "threshold_sweep": sweep,
@@ -309,8 +482,13 @@ def main() -> int:
         args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
         logger.info("report written to %s", args.output)
 
-    best = max(one_class.items(), key=lambda item: item[1]["roc_auc"])
-    logger.info("best one-class detector by ROC-AUC: %s (%.4f)", best[0], best[1]["roc_auc"])
+    best = max(cross_validated.items(), key=lambda item: item[1]["f1_percentile"]["mean"])
+    logger.info(
+        "best one-class detector over %d folds: %s, f1 %s",
+        best[1]["n_folds"],
+        best[0],
+        format_interval(best[1]["f1_percentile"]),
+    )
     return 0
 
 
