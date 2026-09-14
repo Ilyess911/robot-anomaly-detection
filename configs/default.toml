@@ -1,0 +1,32 @@
+# Every parameter that can move a published number.
+#
+# The point of putting them in one file is not configurability for its own
+# sake. It is that `reports/*.json` records which file produced it, so a figure
+# in the README can always be traced back to the exact protocol behind it.
+#
+# TOML rather than YAML because Python reads it from the standard library.
+# One fewer dependency on the path between the data and the result.
+
+[protocol]
+random_state = 42        # every split, every search, every detector
+test_size = 0.2          # 93 held-out executions out of 463
+cv_folds = 5             # stratified, shuffled with random_state
+scoring = "f1"           # positive class is the failure, not a weighted average
+
+[detectors]
+# Percentile of the healthy training scores used as the alarm threshold.
+# 95 accepts a 5% false alarm rate on data already seen, which is where a line
+# with a costly stop would start.
+threshold_percentile = 95.0
+pca_variance = 0.95      # size of the healthy subspace, set by variance kept
+one_class_svm_nu = 0.1   # upper bound on training points outside the boundary
+isolation_forest_trees = 200
+
+[controls]
+shuffled_label_draws = 5 # permutations averaged in the leak control
+
+[transfer]
+# Leave-one-subset-out: train on four phases of the assembly task, test on the
+# fifth. Nothing in the random split measures whether the detector survives a
+# change of task, and this is the closest this dataset can come to asking.
+enabled = true
