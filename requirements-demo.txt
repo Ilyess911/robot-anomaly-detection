@@ -1,0 +1,7 @@
+# The browser demo only. It is deliberately not part of requirements.txt: no
+# published number depends on it, and nothing in CI installs it.
+#
+#     pip install -r requirements-lock.txt -r requirements-demo.txt
+#     streamlit run app/streamlit_app.py
+
+streamlit>=1.40
