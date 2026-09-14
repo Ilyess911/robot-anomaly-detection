@@ -33,7 +33,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Patch
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import precision_recall_curve, roc_curve
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -255,7 +254,7 @@ def figure_duplicate_leak(benchmark: dict, out: Path) -> None:
     axis.set_xticks(position)
     axis.set_xticklabels([PRETTY.get(name, name) for name in names], fontsize=9)
     axis.set_ylim(0.85, 1.045)
-    axis.set_ylabel("cross-validated F1, anomaly class")
+    axis.set_ylabel("cross-validated F1, failure class")
     axis.set_title("What 212 duplicated executions were worth")
     axis.legend(loc="lower left")
     figure.savefig(out / "duplicate-leak.png")
@@ -344,39 +343,52 @@ def figure_threshold(experiments: dict, out: Path) -> None:
     plt.close(figure)
 
 
-def figure_curves(split, detectors, out: Path) -> None:
-    """ROC and precision-recall for the four detectors, on the grouped test set."""
-    figure, axes = plt.subplots(1, 2, figsize=(10.4, 4.4))
-    palette = {
-        "isolation_forest": ANOMALY,
-        "one_class_svm": HEALTHY,
-        "pca_reconstruction": ACCENT,
-        "mahalanobis": DARK,
-    }
-    for detector in detectors:
-        scores = detector.anomaly_score(split.X_test)
-        fpr, tpr, _ = roc_curve(split.y_test, scores)
-        precision, recall, _ = precision_recall_curve(split.y_test, scores)
-        axes[0].plot(
-            fpr, tpr, linewidth=1.8, color=palette[detector.name], label=PRETTY[detector.name]
-        )
-        axes[1].plot(recall, precision, linewidth=1.8, color=palette[detector.name])
+def figure_score_distributions(split, detectors, out: Path) -> None:
+    """Why four detectors that rank identically well score so differently.
 
-    axes[0].plot([0, 1], [0, 1], linestyle=":", color=GREY, linewidth=1)
-    axes[0].set_xlabel("false positive rate")
-    axes[0].set_ylabel("true positive rate")
-    axes[0].set_title("ROC")
-    axes[0].legend(loc="lower right", fontsize=9)
+    A ROC curve would be four overlapping right angles here, since every
+    detector reaches 1.000, and it would say nothing. What separates them is
+    where their alarm threshold lands inside their own score distribution, so
+    that is what this draws: every score divided by its detector's threshold, on
+    a log axis, with the alarm at 1.0 on all four panels.
 
-    share = float(split.y_test.mean())
-    axes[1].axhline(share, linestyle=":", color=GREY, linewidth=1)
-    axes[1].text(0.02, share + 0.01, f"always anomaly ({share:.2f})", fontsize=8, color=GREY)
-    axes[1].set_xlabel("recall")
-    axes[1].set_ylabel("precision")
-    axes[1].set_title("Precision-recall")
-    figure.suptitle("One-class detectors on 93 unseen executions, no failure seen in training")
+    Read it as: anything above the line is flagged. A detector whose healthy
+    test scores sit above 1.0 raises false alarms even though its ranking is
+    perfect, and a detector whose failures sit below it misses them.
+
+    One-Class SVM's decision function goes negative well inside its boundary, so
+    a ratio there is negative and meaningless on a log axis. Those points are
+    clipped to the bottom of the panel rather than dropped, which keeps the
+    count honest at the cost of a flat row of markers.
+    """
+    figure, axes = plt.subplots(1, 4, figsize=(12.4, 4.0), sharey=True)
+    generator = np.random.default_rng(0)
+
+    for axis, detector in zip(axes, detectors, strict=True):
+        groups = [
+            ("healthy\ntraining", detector.train_scores_, HEALTHY),
+            ("healthy\nheld out", detector.anomaly_score(split.X_test[split.y_test == 0]), ACCENT),
+            ("failed\nheld out", detector.anomaly_score(split.X_test[split.y_test == 1]), ANOMALY),
+        ]
+        for position, (_label, values, color) in enumerate(groups):
+            ratio = np.clip(values / detector.threshold_, 1e-3, None)
+            jitter = generator.uniform(-0.16, 0.16, size=len(ratio))
+            axis.scatter(position + jitter, ratio, s=13, color=color, alpha=0.7, zorder=3)
+
+        axis.axhline(1.0, color=DARK, linestyle="--", linewidth=1.1, zorder=2)
+        axis.set_yscale("log")
+        axis.set_xticks(range(3), [group[0] for group in groups], fontsize=8)
+        axis.set_xlim(-0.6, 2.6)
+        axis.set_title(PRETTY[detector.name], fontsize=10)
+        axis.grid(axis="x", visible=False)
+
+    axes[0].set_ylabel("anomaly score, as a multiple of the alarm threshold")
+    figure.suptitle(
+        "Every detector ranks perfectly. The alarm line lands in a different place in each",
+        y=1.02,
+    )
     figure.tight_layout()
-    figure.savefig(out / "roc-pr-curves.png")
+    figure.savefig(out / "score-distributions.png")
     plt.close(figure)
 
 
@@ -453,7 +465,7 @@ def figure_transfer(experiments: dict, out: Path) -> None:
     naive_values = [best(naive, subset) for subset in subsets] if naive else None
     disjoint_values = [best(disjoint, subset) for subset in subsets]
 
-    figure, axis = plt.subplots(figsize=(8.6, 4.2))
+    figure, axis = plt.subplots(figsize=(8.6, 4.6))
     if naive_values:
         axis.bar(
             position - width / 2,
@@ -471,16 +483,13 @@ def figure_transfer(experiments: dict, out: Path) -> None:
     )
     axis.set_xticks(position)
     axis.set_xticklabels(
-        [
-            f"{subset}\n{disjoint[subset]['n_train_healthy']} healthy runs left"
-            for subset in subsets
-        ],
+        [f"{subset}\n({disjoint[subset]['n_train_healthy']} healthy left)" for subset in subsets],
         fontsize=9,
     )
     axis.set_ylim(0.8, 1.03)
     axis.set_ylabel("ROC-AUC, averaged over the four detectors")
     axis.set_title("Transfer to an unseen phase of the assembly task")
-    axis.legend(loc="lower left", fontsize=9)
+    axis.legend(loc="upper center", bbox_to_anchor=(0.5, -0.17), ncol=2, fontsize=9)
     figure.savefig(out / "transfer-across-subsets.png")
     plt.close(figure)
 
@@ -543,7 +552,7 @@ def main() -> int:
     figure_duplicate_leak(benchmark, args.output)
     figure_comparison(benchmark, experiments, args.output)
     figure_threshold(experiments, args.output)
-    figure_curves(split, detectors, args.output)
+    figure_score_distributions(split, detectors, args.output)
     figure_confusion(split, detectors, args.output)
     figure_transfer(experiments, args.output)
     figure_importance(split, columns, args.output)

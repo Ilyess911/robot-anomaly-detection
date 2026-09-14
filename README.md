@@ -189,7 +189,14 @@ Isolation Forest is the extreme case: 1.000 at the 90th percentile, 0.660 at the
 monotonically towards the 99th. Choosing the detector and choosing the threshold
 rule are the same decision.
 
-![ROC and precision-recall for the four detectors](assets/roc-pr-curves.png)
+![Anomaly scores relative to each detector's alarm threshold](assets/score-distributions.png)
+
+All four reach ROC-AUC 1.000, so their ROC curves are four identical right
+angles and are not worth drawing. What separates them is the figure above: every
+score divided by its own detector's alarm threshold, with the alarm at 1.0 on
+each panel. Isolation Forest puts its failures *at* the line, which is why it
+misses half of them at the 95th percentile. The other three put failures one to
+five orders of magnitude above it.
 
 ### The benchmark contains duplicates, and they made the scores perfect
 
