@@ -1,4 +1,4 @@
-.PHONY: setup test lint format benchmark experiments figures reproduce notebooks demo verify clean
+.PHONY: setup test lint format benchmark experiments deployment figures reproduce detect notebooks demo verify clean
 
 VENV := .venv
 PY   := $(VENV)/bin/python
@@ -24,13 +24,16 @@ format:  ## Reformat in place
 benchmark:  ## Baselines and supervised models under both split protocols
 	$(PY) scripts/benchmark.py --output reports/benchmark.json
 
-experiments:  ## One-class detection, threshold sensitivity, transfer across subsets
+experiments:  ## One-class detection under repeated CV, calibration, transfer
 	$(PY) scripts/experiments.py --output reports/experiments.json
+
+deployment:  ## Cost-sensitive operating point and inference cost
+	$(PY) scripts/deployment.py --output reports/deployment.json
 
 figures:  ## Redraw every image the README publishes, from reports/
 	$(PY) scripts/figures.py --reports reports --output assets
 
-reproduce: benchmark experiments figures  ## Every published number and figure, from scratch
+reproduce: benchmark experiments deployment figures  ## Every published number and figure, from scratch
 
 detect:  ## Score a subset with a fitted detector, see scripts/detect.py --help
 	$(PY) scripts/detect.py --subset LP1
@@ -44,7 +47,7 @@ notebooks:  ## Open notebooks/, to run in order 01 to 05
 # The CI target. The order is not arbitrary: lint fails in a second, the tests
 # in twenty, the benchmark in minutes. As little time as possible is spent
 # before finding out that something is wrong.
-verify: lint test benchmark experiments  ## Everything, fastest to slowest
+verify: lint test benchmark experiments deployment  ## Everything, fastest to slowest
 
 clean:
 	rm -rf $(VENV) .pytest_cache .ruff_cache

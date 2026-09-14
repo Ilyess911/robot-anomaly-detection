@@ -47,8 +47,10 @@ jobs:
         run: |
           cp reports/benchmark.json /tmp/published-benchmark.json
           cp reports/experiments.json /tmp/published-experiments.json
+          cp reports/deployment.json /tmp/published-deployment.json
           python scripts/benchmark.py --output reports/benchmark.json
           python scripts/experiments.py --output reports/experiments.json
+          python scripts/deployment.py --output reports/deployment.json
           python - <<'PY'
           import json, sys
 
@@ -62,7 +64,17 @@ jobs:
               "experiments": (
                   "/tmp/published-experiments.json",
                   "reports/experiments.json",
-                  ("one_class", "one_class_random_split", "duplicates", "splits"),
+                  ("cross_validated", "cross_validated_ungrouped", "one_class",
+                   "one_class_random_split", "duplicates", "splits"),
+              ),
+              # Inference timings are excluded on purpose: they measure the
+              # runner, not the model, and a shared CI machine cannot reproduce
+              # a millisecond. Only the economics, which are deterministic, are
+              # compared.
+              "deployment": (
+                  "/tmp/published-deployment.json",
+                  "reports/deployment.json",
+                  ("economics",),
               ),
           }
 

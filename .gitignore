@@ -33,3 +33,4 @@ models/*.pkl
 reports/*
 !reports/benchmark.json
 !reports/experiments.json
+!reports/deployment.json
