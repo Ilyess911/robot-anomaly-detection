@@ -61,8 +61,14 @@ def load_everything():
 
 
 @st.cache_resource
-def fit(detector_name: str, percentile: float, healthy_key: bytes, healthy: np.ndarray):
-    """Fit a detector, cached on the healthy data it was given."""
+def fit(detector_name: str, percentile: float, healthy_key: bytes, _healthy: np.ndarray):
+    """Fit a detector, cached on the healthy data it was given.
+
+    The array is passed with a leading underscore so Streamlit does not try to
+    hash it, and ``healthy_key`` carries its bytes as the cache key instead.
+    Without that split the cache either refuses the argument or silently keys on
+    object identity.
+    """
     config = load_config()
     keyword = {
         "isolation_forest": {"n_estimators": config.isolation_forest_trees},
@@ -72,7 +78,7 @@ def fit(detector_name: str, percentile: float, healthy_key: bytes, healthy: np.n
     }[detector_name]
     return DETECTORS[detector_name](
         percentile=percentile, random_state=config.random_state, **keyword
-    ).fit(healthy)
+    ).fit(_healthy)
 
 
 def main() -> None:
