@@ -1,36 +1,50 @@
-.PHONY: setup test lint format benchmark notebooks verify clean
+.PHONY: setup test lint format benchmark experiments figures reproduce notebooks demo verify clean
 
 VENV := .venv
 PY   := $(VENV)/bin/python
 
-setup:  ## Crée l'environnement et installe les versions exactes du benchmark
+setup:  ## Create the environment with the exact versions behind the published numbers
 	python3 -m venv $(VENV)
 	$(PY) -m pip install --quiet --upgrade pip
 	$(PY) -m pip install --quiet -r requirements-lock.txt
 	$(PY) -m ipykernel install --user --name robot-anomaly \
 		--display-name "Python (robot-anomaly)"
 
-test:  ## Les tests de données et de protocole
+test:  ## Dataset, protocol, duplicate and detector tests
 	$(PY) -m pytest tests/ -q
 
-lint:  ## Style et erreurs statiques
-	$(PY) -m ruff check src scripts tests
-	$(PY) -m ruff format --check src scripts tests
+lint:  ## Style and static errors
+	$(PY) -m ruff check src scripts tests app
+	$(PY) -m ruff format --check src scripts tests app
 
-format:  ## Reformate
-	$(PY) -m ruff format src scripts tests
-	$(PY) -m ruff check --fix src scripts tests
+format:  ## Reformat in place
+	$(PY) -m ruff format src scripts tests app
+	$(PY) -m ruff check --fix src scripts tests app
 
-benchmark:  ## Rejoue le comparatif et réécrit reports/benchmark.json
+benchmark:  ## Baselines and supervised models under both split protocols
 	$(PY) scripts/benchmark.py --output reports/benchmark.json
 
-notebooks:  ## Ouvre les notebooks, à exécuter dans l'ordre 01 à 05
+experiments:  ## One-class detection, threshold sensitivity, transfer across subsets
+	$(PY) scripts/experiments.py --output reports/experiments.json
+
+figures:  ## Redraw every image the README publishes, from reports/
+	$(PY) scripts/figures.py --reports reports --output assets
+
+reproduce: benchmark experiments figures  ## Every published number and figure, from scratch
+
+detect:  ## Score a subset with a fitted detector, see scripts/detect.py --help
+	$(PY) scripts/detect.py --subset LP1
+
+demo:  ## Local Streamlit demo, needs requirements-demo.txt
+	$(VENV)/bin/streamlit run app/streamlit_app.py
+
+notebooks:  ## Open notebooks/, to run in order 01 to 05
 	$(VENV)/bin/jupyter notebook notebooks/
 
-# La cible de la CI. L'ordre n'est pas arbitraire : le lint échoue en une
-# seconde, les tests en dix, le benchmark en plusieurs minutes. On perd le
-# moins de temps possible avant de savoir que quelque chose ne va pas.
-verify: lint test benchmark  ## Tout, dans l'ordre du plus rapide au plus lent
+# The CI target. The order is not arbitrary: lint fails in a second, the tests
+# in twenty, the benchmark in minutes. As little time as possible is spent
+# before finding out that something is wrong.
+verify: lint test benchmark experiments  ## Everything, fastest to slowest
 
 clean:
 	rm -rf $(VENV) .pytest_cache .ruff_cache

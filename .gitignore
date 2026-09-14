@@ -1,4 +1,4 @@
-# Environnements Python
+# Python environments
 .venv/
 venv/
 env/
@@ -10,16 +10,26 @@ __pycache__/
 .ipynb_checkpoints/
 */.ipynb_checkpoints/
 
-# Système
+# System
 .DS_Store
 Thumbs.db
 
-# Éditeurs
+# Editors
 .vscode/
 .idea/
 
-# reports/benchmark.json est versionné exprès : le README cite ses chiffres, et
-# une affirmation vérifiable doit être livrée avec la preuve qui la soutient.
-# Les rapports produits sous un autre nom, eux, sont des essais locaux.
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+
+# Trained estimators are build artifacts, not sources. An earlier version of
+# this repository shipped four pickles trained under a labelling bug, and they
+# outlived the fix by two months because nothing regenerates a committed file.
+models/*.pkl
+
+# reports/benchmark.json and reports/experiments.json are versioned on purpose:
+# the README quotes their figures, and a verifiable claim ships with its proof.
+# Reports written under any other name are local trials.
 reports/*
 !reports/benchmark.json
+!reports/experiments.json
