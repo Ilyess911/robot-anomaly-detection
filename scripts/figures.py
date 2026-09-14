@@ -517,11 +517,12 @@ def figure_deployment_cost(deployment: dict, out: Path) -> None:
     axis.axhline(always, color=GREY, linestyle=":", linewidth=1.1)
     axis.text(
         0.012,
-        0.955,
+        0.905,
         f"ignore every alarm ({nothing:.2f}) and stop on everything ({always:.2f})",
         transform=axis.transAxes,
         fontsize=8,
         color=DARK,
+        bbox={"facecolor": "white", "edgecolor": "none", "pad": 1.5},
     )
 
     axis.set_xticks(position)
