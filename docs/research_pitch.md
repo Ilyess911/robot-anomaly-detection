@@ -50,39 +50,52 @@ single sensor statistic at a single threshold, and a depth-2 decision tree.
 
 **The problem is easier than the models suggest.** One threshold on the range of
 the Fx force channel reaches 0.931 F1 on the failure class, against 0.838 for
-answering "failure" every time. A tuned random forest reaches 1.000 on the
-held-out fold. Publishing the last number without the first two is the ordinary
-way to be technically truthful and practically misleading.
+answering "failure" every time. Publishing a tuned classifier's score without
+those two is the ordinary way to be technically truthful and practically
+misleading. The modelling contribution on this dataset is close to nil, and what
+follows is about the protocol.
 
-**Detection without labelled failures is viable here.** All four one-class
-detectors reach ROC-AUC 1.000 on the grouped held-out fold: fitted on healthy
-runs alone, they rank every failure above every healthy execution.
+**Detection without labelled failures is a solved ranking problem here.** Over
+five repeats of grouped five-fold cross-validation, 25 fits per detector, the
+four reach ROC-AUC between 0.981 and 0.989. Three of them, One-Class SVM,
+Mahalanobis and PCA reconstruction, have overlapping confidence intervals on
+every metric and are reported as indistinguishable rather than ranked. Isolation
+Forest is distinguishably worse while being 46 times slower and 145 times larger.
+On this data the classical control chart is not beaten by anything.
 
-**Ranking is not the problem, the threshold is.** At a label-free threshold set
-at the 95th percentile of the healthy training scores, the same four detectors
-score between 0.660 and 0.918 F1. Isolation Forest falls from 1.000 at the 90th
-percentile to 0.660 at the 95th; One-Class SVM is flat at 0.918 across the whole
-sweep; PCA and Mahalanobis improve monotonically to 0.971 at the 99th. An oracle
-threshold would give all four 1.000. **The entire operational gap is calibration,
-not discrimination**, which is a result about deployment rather than about
-models.
+**It is an unsolved calibration problem.** A threshold asking for a 5% false
+alarm rate delivers 54% to 66% on healthy executions the detector has not seen.
+The mechanism is identifiable: the five subsets are phases of the same task with
+different force regimes, so healthy operation is a mixture, and a threshold
+calibrated on a sample of that mixture does not hold on an unseen part of it. A
+distribution-free tolerance bound, which caps the false alarm rate with stated
+confidence under an i.i.d. assumption, halves the damage on Mahalanobis, from
+60.4% to 24.7%, and does nothing for One-Class SVM, whose decision function is
+nearly discrete. Neither rule fixes the mixture, which is the honest end of the
+analysis and the natural start of the next one.
 
-**The benchmark contains hidden duplicates, and they produced the perfect
-scores.** 463 rows hold 251 distinct sensor traces. LP2 and LP3 annotate the same
-47 recordings under two fault taxonomies; LP4 and LP5 share 116 more. A random
-80/20 split hands the model 64 of its 93 test executions in advance. Under
-grouped cross-validation, where no trace sits on both sides, cross-validated F1
-falls by 0.021 to 0.036 depending on the model, and the random forest's
-1.000 ± 0.000 becomes 0.979 ± 0.019. A standard deviation of exactly zero across
-five folds of 463 samples was the signature, and a shuffled-label control had
-passed throughout, because a permutation breaks the association duplicates
-carry.
+**Under realistic line economics, the miscalibration costs an order of
+magnitude.** At one failure per hundred executions with a missed failure worth a
+hundred unnecessary stops, expected cost per execution is 1.00 for ignoring every
+alarm, 0.99 for stopping on everything, 0.058 at the best reachable operating
+point, and 0.28 to 0.68 at the threshold a label-free rule actually sets. Between
+80% and 90% of the achievable benefit is lost to the choice of threshold rather
+than to the choice of model. This is also why F1 stops being reported at this
+point: One-Class SVM scores 0.904 F1 while flagging 54% of healthy runs, an
+artefact of a test set that is 72% failures.
 
-**Transfer across task phases degrades honestly.** Holding out one phase of the
-assembly task and removing every copy of its traces, mean ROC-AUC over the four
-detectors falls to 0.923 on the hardest phase and 0.952 on the next, against
-0.993 and 0.990 when the duplicates are left in. The naive protocol reports
-near-perfect transfer. The trace-disjoint one does not.
+**The benchmark itself contains duplicates, and they hid both problems.** 463
+rows hold 251 distinct sensor traces. LP2 and LP3 annotate the same 47
+recordings; LP4 and LP5 share 116 more. A random 80/20 split hands the model 64
+of its 93 test executions in advance. Grouping the folds costs 0.021 to 0.036 of
+cross-validated F1, turns a random forest's 1.000 ± 0.000 into 0.979 ± 0.019, and
+triples the measured false alarm rate. A shuffled-label control had passed
+throughout, because a permutation breaks the association duplicates carry: a leak
+control tests one leak.
+
+**Transfer across task phases degrades honestly.** Holding out one phase and
+removing every copy of its traces, mean ROC-AUC falls to 0.923 on the hardest
+phase against 0.993 when the duplicates are left in.
 
 ## Limitations
 
@@ -97,17 +110,25 @@ Stated because they bound what the results support.
   recalibration and wear are absent from the evaluation.
 - The 15 time steps are collapsed into statistics. No sequential model is used
   and no claim about sequence modelling is made.
-- Nothing is deployed. No inference latency, no memory footprint, no monitoring.
+- The confidence intervals assume the 25 folds are exchangeable. They share
+  training data across repeats, so they are mildly optimistic.
+- Inference timings are a laptop CPU. Only the ratios between detectors transfer
+  to an embedded target.
+- Nothing is deployed. No inference service, no monitoring, no field trial.
 
 ## A 9 to 12 week research project
 
 Ordered by what the current results make most pressing.
 
-1. **Threshold calibration without labels** (weeks 1-4). The clearest finding
-   here is that discrimination is solved and calibration is not. Extreme value
-   theory on the healthy score tail, conformal prediction with a
-   distribution-free false alarm guarantee, and drift-adaptive thresholds are
-   three approaches whose false alarm rates are directly comparable.
+1. **Threshold calibration under a mixture of healthy regimes** (weeks 1-4). The
+   clearest finding here is that discrimination is saturated and calibration
+   fails, and that it fails for an identified reason: healthy operation is
+   several behaviours, not one. Four candidates with directly comparable false
+   alarm rates: extreme value theory on the healthy score tail, conformal
+   prediction under relaxed exchangeability, per-regime calibration after
+   clustering the healthy data, and online recalibration. The evaluation harness,
+   the baselines and the cost model already exist in the repository, so the first
+   comparable number is days away rather than weeks.
 
 2. **Sequential models on the raw traces** (weeks 3-6). LSTM or temporal
    convolutional autoencoders on the 15 by 6 tensor, tested against the 48
@@ -136,9 +157,10 @@ Ordered by what the current results make most pressing.
 ## Why this work, from this candidate
 
 The contribution is not a model. It is a protocol that refuses to flatter itself:
-three baselines beside every score, leaks measured rather than asserted, a
-control that failed to catch the second defect and is documented as insufficient,
-and a continuous integration job that fails if any published figure moves. That
+three baselines beside every score, confidence intervals over 25 fits rather than
+a point from one lucky fold, three leaks measured rather than asserted, a control
+that failed to catch the second defect and is documented as insufficient, and a
+continuous integration job that fails if any published figure moves. That
 habit transfers to any applied ML project and it is the part of research work
 that a course grade does not capture.
 

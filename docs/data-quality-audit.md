@@ -79,6 +79,24 @@ The standard deviation of exactly zero is the tell. A model does not reach
 identical perfection on five different folds of 463 samples unless the folds are
 not independent.
 
+**What the duplicates also hid, and this is worse than the F1.** Every one-class
+detector in this project is thresholded by a rule asking for a 5% false alarm
+rate. Measured on healthy executions the detector has not seen:
+
+| Detector | Target | Random folds | Grouped folds |
+| --- | --- | --- | --- |
+| Isolation Forest | 5% | 6.5% | 6.8% |
+| One-Class SVM | 5% | 15.7% | **54.0%** |
+| PCA reconstruction | 5% | 23.2% | **65.7%** |
+| Mahalanobis | 5% | 16.4% | **60.4%** |
+
+Grouping triples the measured false alarm rate. Two copies of the same recording
+on both sides of a split make the held-out healthy runs look like the training
+healthy runs, which is exactly the assumption every threshold rule depends on.
+The duplicates were not only inflating F1 by two to four points, they were
+concealing a threefold calibration failure, and the calibration failure is the
+one that decides whether the system is deployable.
+
 **One thing the duplicates did not break.** No trace ever carries a healthy
 label in one subset and a failure label in another. The taxonomies differ, the
 healthy against failed call does not, so the binary target stays unambiguous and

@@ -8,12 +8,13 @@ open with. Every figure quoted here comes from `reports/` and regenerates with
 
 ## Three lines, for a CV or a signature block
 
-> **Robot Anomaly Detection** — An anomaly detection framework for robotic and
-> industrial sensor data, comparing supervised classifiers against one-class
-> detectors fitted on healthy operation alone. Found and quantified two data
-> defects in the benchmark itself, including duplicate executions that inflated
-> every published score on it. Fully reproducible: continuous integration fails
-> if any published figure moves.
+> **Robot Anomaly Detection**. An anomaly detection framework for robotic and
+> industrial sensor data in which one-class detectors fitted on healthy operation
+> alone rank failures at ROC-AUC 0.99 yet flag 60% of healthy runs at a threshold
+> asking for 5%, destroying 90% of the achievable value under realistic line
+> economics. Also found that the benchmark holds 463 rows over 251 distinct
+> recordings, which is what produced the perfect scores previously published on
+> it. Fully reproducible: continuous integration fails if any figure moves.
 
 ---
 
@@ -21,13 +22,14 @@ open with. Every figure quoted here comes from `reports/` and regenerates with
 
 > I built an anomaly detection framework for robotic and industrial sensor data
 > on the UCI Robot Execution Failures dataset: 463 executions, six force and
-> torque channels, fifteen time steps each. It compares four supervised
-> classifiers against four lightweight one-class detectors fitted on healthy
-> runs only, which is the deployable setting in predictive maintenance. Auditing
-> it revealed that the benchmark holds only 251 distinct recordings behind its
-> 463 rows, so a random split hands the model 69% of its test set in advance.
-> Under a grouped protocol the perfect scores disappear. The repository publishes
-> baselines, leak controls and a reproducibility check for every figure.
+> torque channels, fifteen time steps each. Four lightweight one-class detectors
+> are fitted on healthy runs only, which is the deployable setting in predictive
+> maintenance, and evaluated over 25 grouped folds. They rank failures almost
+> perfectly and calibrate badly: a threshold asking for a 5% false alarm rate
+> delivers 54% to 66%, which under realistic line economics destroys about 90% of
+> the value the detector could deliver. Auditing the benchmark also showed 463
+> rows over 251 distinct recordings, which is what produced the perfect scores
+> previously published on it.
 
 ---
 
@@ -35,30 +37,28 @@ open with. Every figure quoted here comes from `reports/` and regenerates with
 
 > This project studies how well lightweight machine learning models detect
 > abnormal operating behaviour in a robotic system from multivariate force and
-> torque data, and how much of a reported score survives an honest evaluation
-> protocol.
+> torque data, and what survives once the alarm threshold has to be chosen
+> without labels.
 >
 > Each execution of an industrial manipulator is recorded as fifteen time steps
-> of six wrist channels and reduced to 48 interpretable statistical descriptors.
-> Four supervised classifiers are compared against four one-class detectors
-> (Isolation Forest, One-Class SVM, PCA reconstruction error, Mahalanobis
-> distance) fitted on healthy executions alone, which mirrors deployment: a new
-> cell has months of healthy operation and no catalogue of the failures it has
-> not had yet.
+> of six wrist channels and reduced to 48 interpretable descriptors. Four
+> one-class detectors, Isolation Forest, One-Class SVM, PCA reconstruction error
+> and Mahalanobis distance, are fitted on healthy executions alone and evaluated
+> over five repeats of grouped five-fold cross-validation.
 >
-> Three results carry the work. One threshold on one sensor reaches 0.93 F1
-> against 0.84 for answering "failure" every time, so the difficulty was never
-> the model. All four one-class detectors rank failures perfectly on unseen data,
-> yet score between 0.66 and 0.92 F1 at a label-free threshold: the operational
-> gap is calibration, not discrimination. And the benchmark itself holds 463 rows
-> over 251 distinct recordings, so the random split every published result uses
-> leaks 69% of the test set, which is what produced a cross-validated F1 of
-> 1.000 ± 0.000.
+> Three results carry the work. One threshold on one sensor reaches 0.931 F1
+> against 0.838 for answering "failure" every time, so the difficulty was never
+> the model. The detectors then rank failures at ROC-AUC 0.981 to 0.989 while a
+> threshold asking for a 5% false alarm rate delivers 54% to 66%, because healthy
+> operation is a mixture of task regimes rather than one distribution; under
+> realistic line economics that miscalibration costs an order of magnitude more
+> than the modelling gains are worth. And the benchmark itself holds 463 rows
+> over 251 distinct recordings, so the random split used in published work leaks
+> 69% of the test set, inflates cross-validated F1 by up to 0.036, and triples
+> the apparent false alarm rate.
 >
 > Everything reproduces from one command, and continuous integration fails if a
 > published number moves.
-
----
 
 ## Research discussion
 
@@ -120,10 +120,13 @@ raw tensor.
 
 ### What questions remain open
 
-1. **Can a threshold be set without labels and still hold?** Extreme value theory
-   on the healthy score tail and conformal prediction both promise a controlled
-   false alarm rate. On this data the ranking is already perfect, so a
-   calibration study would isolate exactly the quantity that matters.
+1. **Can a threshold be set without labels when healthy is not one behaviour?**
+   The distribution-free tolerance bound implemented here caps the false alarm
+   rate under an i.i.d. assumption, halves the damage on one detector and does
+   nothing for another. The assumption is what breaks, not the mathematics.
+   Per-regime calibration, conformal prediction under relaxed exchangeability and
+   online recalibration are the candidates, and the harness to compare them
+   already exists.
 
 2. **Does anything here transfer?** Holding out one phase of the task and
    removing every copy of its traces, mean ROC-AUC falls to 0.92 on the hardest
